@@ -2,9 +2,9 @@
 	"name": "ManhuaFast",
 	"description": "Viewer for manhua fast",
 	"author": "nuthug",
-	"authorUrl": "https://raw.githubusercontent.com/Nutstone/grayjay-manhuafast-plugin/refs/heads/main/ManhuaFastConfig.json",
+	"authorUrl": "https://raw.githubusercontent.com/Nutstone/grayjay-manhuafast-plugin/refs/heads/main",
 	
-	"sourceUrl": "https://raw.githubusercontent.com/Nutstone/grayjay-manhuafast-plugin/refs/heads/main",
+	"sourceUrl": "https://raw.githubusercontent.com/Nutstone/grayjay-manhuafast-plugin/refs/heads/main/ManhuaFastConfig.json",
 	"repositoryUrl": "https://raw.githubusercontent.com/Nutstone/grayjay-manhuafast-plugin/refs/heads/main",
 	"scriptUrl": "./ManhuaFastScript.js",
 	"version": 1,

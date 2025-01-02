@@ -12,8 +12,8 @@
 	"iconUrl": "./d7dfe5ef-4332-4ffa-b890-1b703d22ca0d.png",
 	"id": "cd1dff4b-89d3-4326-8c8c-930da64cec5c",
 	
-	"scriptSignature": "<ommitted>",
-	"scriptPublicKey": "<ommitted>",
+	"scriptSignature": "",
+	"scriptPublicKey": "",
 	"packages": ["Http", "DOMParser", "Utilities"],
 	
 	"allowEval": false,

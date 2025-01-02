@@ -2,15 +2,15 @@
 	"name": "ManhuaFast",
 	"description": "Viewer for manhua fast",
 	"author": "nuthug",
-	"authorUrl": "http://192.168.2.123",
+	"authorUrl": "https://github.com/Nutstone/grayjay-manhuafast-plugin/blob/main/ManhuaFastConfig.json",
 	
-	"sourceUrl": "http://192.168.2.123/manhuafastconfig.json",
-	"repositoryUrl": "http://192.168.2.123",
+	"sourceUrl": "https://github.com/Nutstone/grayjay-manhuafast-plugin/blob/main/ManhuaFastConfig.json",
+	"repositoryUrl": "https://github.com/Nutstone/grayjay-manhuafast-plugin/blob/main",
 	"scriptUrl": "./manhuafastscript.js",
 	"version": 1,
 	
 	"iconUrl": "./d7dfe5ef-4332-4ffa-b890-1b703d22ca0d.png",
-	"id": "309b2e83-7ede-4af8-8ee9-822bc4647a24",
+	"id": "cd1dff4b-89d3-4326-8c8c-930da64cec5c",
 	
 	"scriptSignature": "<ommitted>",
 	"scriptPublicKey": "<ommitted>",

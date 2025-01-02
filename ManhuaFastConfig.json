@@ -1,0 +1,23 @@
+{
+	"name": "ManhuaFast",
+	"description": "Viewer for manhua fast",
+	"author": "nuthug",
+	"authorUrl": "http://192.168.2.123",
+	
+	"sourceUrl": "http://192.168.2.123/manhuafastconfig.json",
+	"repositoryUrl": "http://192.168.2.123",
+	"scriptUrl": "./manhuafastscript.js",
+	"version": 1,
+	
+	"iconUrl": "./d7dfe5ef-4332-4ffa-b890-1b703d22ca0d.png",
+	"id": "309b2e83-7ede-4af8-8ee9-822bc4647a24",
+	
+	"scriptSignature": "<ommitted>",
+	"scriptPublicKey": "<ommitted>",
+	"packages": ["Http", "DOMParser", "Utilities"],
+	
+	"allowEval": false,
+	"allowUrls": [
+		"manhuafast.com"
+	]
+}

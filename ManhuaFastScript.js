@@ -149,26 +149,8 @@ source.search = function(query, type, order, filters, continuationToken) {
      * @param continuationToken: any?
      * @returns: VideoPager
      */
-    const searchUrl = `https://example.com/?s=${encodeURIComponent(query)}`;
-    const response = fetch(searchUrl); // Send request
-    const html = response.text(); // Get HTML response
-
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const results = [];
-    
-    doc.querySelectorAll(".manga-item").forEach((item) => {
-        const manga = {
-            id: item.querySelector("a").href,
-            name: item.querySelector(".manga-title").textContent.trim(),
-            thumbnail: item.querySelector("img").src,
-            description: item.querySelector(".manga-description").textContent.trim(),
-        };
-        results.push(manga);
-    });
-
-    const hasMore = false; // No pagination, adjust if applicable
-    const context = { query, continuationToken };
-    return new SomeSearchVideoPager(results, hasMore, context);
+ 
+    return [];
 }
 
 source.searchChannels = function(query, continuationToken) {
@@ -255,10 +237,6 @@ source.getChannelCapabilities = () => {
 	};
 }
 
-source.isVideoDetailsUrl = function (url)  {
-    return false;
-}
-
 source.getChannelContents = function(url, type, order, filters, continuationToken) {
     /**
      * Fetches manga chapters for a specific manga URL (channel).
@@ -324,6 +302,7 @@ source.isContentDetailsUrl = function(url) {
      * @returns: boolean
      */
     //return REGEX_CONTENT_URL.test(url); // Matches chapter URLs
+    // didn't find a good way to display details in app yet, prefer the app to open details in browser instead by marking all content details as unprocessable
     return false;
 }
 
@@ -386,22 +365,5 @@ source.getComments = function(url, continuationToken) {
      * @param continuationToken: any?
      * @returns: CommentPager
      */
-    const response = fetch(url); // Get chapter page HTML
-    const html = response.text();
-
-    const doc = new DOMParser().parseFromString(html, "text/html");
-
-    const comments = [];
-    doc.querySelectorAll(".comment-item").forEach((item) => {
-        const comment = {
-            user: item.querySelector(".comment-user").textContent.trim(),
-            content: item.querySelector(".comment-content").textContent.trim(),
-            date: item.querySelector(".comment-date").textContent.trim(),
-        };
-        comments.push(comment);
-    });
-
-    const hasMore = false; // Assuming no pagination here
-    const context = { url, continuationToken };
-    return new SomeCommentPager(comments, hasMore, context);
+    return [];
 }

@@ -6,281 +6,392 @@ const REGEX_CONTENT_URL = new RegExp("^https:\/\/manhuafast\.com\/manga\/([^\/]+
 
 const config = {};
 
-function asString(v) {
-    return (v === null || v === undefined) ? "" : String(v);
-}
-
-function previewBody(body, max = 250) {
-    body = asString(body).replace(/\s+/g, " ").trim();
-    return body.length > max ? body.slice(0, max) + "..." : body;
-}
-
-function isLikelyCloudflare(html) {
-    html = asString(html);
-    return (
-        html.includes("cf-browser-verification") ||
-        html.includes("challenge-platform") ||
-        html.includes("cf_chl_") ||
-        html.includes("Just a moment") ||
-        html.includes("/cdn-cgi/")
-    );
-}
-
-function httpGetOrThrow(url, headers = {}) {
-    let res;
-    try {
-        res = http.GET(url, headers, false);
-    } catch (e) {
-        throw new ScriptException("HttpError", `GET failed: ${url}\n${asString(e)}`);
-    }
-
-    const body = asString(res?.body);
-    const code = res?.code ?? res?.status ?? 0;
-
-    if (code && code >= 400) {
-        throw new ScriptException("HttpError", `GET ${url} returned HTTP ${code}\n${previewBody(body)}`);
-    }
-    if (!body || body.length < 50) {
-        throw new ScriptException("HttpError", `GET ${url} returned an empty/short body.\n${previewBody(body)}`);
-    }
-    if (isLikelyCloudflare(body)) {
-        throw new ScriptException(
-            "Cloudflare",
-            `Cloudflare challenge received for:\n${url}\n` +
-            `Grayjay plugins can't solve CF challenges. Use browser/open-web or an unprotected endpoint.`
-        );
-    }
-
-    return body;
-}
-
-function httpPostOrThrow(url, bodyStr = "", headers = {}) {
-    let res;
-    try {
-        res = http.POST(url, bodyStr, headers, false);
-    } catch (e) {
-        throw new ScriptException("HttpError", `POST failed: ${url}\n${asString(e)}`);
-    }
-
-    const body = asString(res?.body);
-    const code = res?.code ?? res?.status ?? 0;
-
-    if (code && code >= 400) {
-        throw new ScriptException("HttpError", `POST ${url} returned HTTP ${code}\n${previewBody(body)}`);
-    }
-    if (!body || body.length < 50) {
-        throw new ScriptException("HttpError", `POST ${url} returned an empty/short body.\n${previewBody(body)}`);
-    }
-    if (isLikelyCloudflare(body)) {
-        throw new ScriptException("Cloudflare", `Cloudflare challenge received for:\n${url}`);
-    }
-
-    return body;
-}
-
-function parseHtmlOrThrow(url, html) {
-    try {
-        return domParser.parseFromString(html, "text/html");
-    } catch (e) {
-        throw new ScriptException("ParseError", `DOM parse failed for ${url}\n${asString(e)}\n${previewBody(html)}`);
-    }
-}
-
-function q(node, selector) {
-    return node ? node.querySelector(selector) : null;
-}
-
-function qAll(node, selector) {
-    return node ? node.querySelectorAll(selector) : [];
-}
-
-function text(el) {
-    return asString(el?.textContent).trim();
-}
-
-function attr(el, name) {
-    return asString(el?.getAttribute?.(name)).trim();
-}
-
-function requireEl(el, what, url, selectorHint = "") {
-    if (el) return el;
-    const hint = selectorHint ? ` (selector: ${selectorHint})` : "";
-    throw new ScriptException("ParseError", `Missing ${what}${hint} on ${url}`);
-}
-
-// --------------------
-// Your existing logic (safer)
-// --------------------
-source.enable = function (conf) {
-    this.config = conf;
-    console.log("WP Manga plugin enabled with config: ", conf);
+// Standard browser User-Agent to reduce Cloudflare blocks.
+// Grayjay's default UA is often flagged as bot traffic.
+const DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://manhuafast.com/"
 };
 
+// ============================================================
+// ASSERT HELPERS — All of these THROW on failure. No silent fallbacks.
+// ============================================================
+
+/**
+ * Checks for Cloudflare challenge pages in response HTML.
+ * Throws with a clear message if detected.
+ */
+function detectCloudflare(body, url) {
+    if (!body || typeof body !== "string") return;
+
+    // Cloudflare JS challenge
+    if (body.indexOf("Just a moment...") !== -1 || body.indexOf("cf-browser-verification") !== -1) {
+        throw new ScriptException("[ManhuaFast] CLOUDFLARE JS CHALLENGE at " + url +
+            " — The site is presenting a Cloudflare browser verification page instead of content." +
+            " Try: 1) Open " + url + " in Grayjay's built-in browser/WebView to get a cf_clearance cookie," +
+            " 2) Wait and retry, 3) Use a different network/VPN.");
+    }
+    // Cloudflare captcha/attention page
+    if (body.indexOf("Attention Required! | Cloudflare") !== -1 || body.indexOf("cf-captcha-container") !== -1) {
+        throw new ScriptException("[ManhuaFast] CLOUDFLARE CAPTCHA at " + url +
+            " — Cloudflare is requiring a captcha. Open this URL in a browser first to solve it.");
+    }
+    // Cloudflare generic block
+    if (body.indexOf("Enable JavaScript and cookies to continue") !== -1) {
+        throw new ScriptException("[ManhuaFast] CLOUDFLARE BLOCK at " + url +
+            " — The response is a Cloudflare interstitial, not actual page content.");
+    }
+    // Cloudflare error page (1020 Access Denied, etc)
+    if (body.indexOf("error code: 10") !== -1 && body.indexOf("cloudflare") !== -1) {
+        throw new ScriptException("[ManhuaFast] CLOUDFLARE ACCESS DENIED at " + url +
+            " — Cloudflare returned an error page. Your IP may be blocked.");
+    }
+}
+
+/**
+ * HTTP GET with validation. Throws on any failure.
+ */
+function requestGET(url, extraHeaders) {
+    const headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
+    let response;
+    try {
+        response = http.GET(url, headers, false);
+    } catch (e) {
+        throw new ScriptException("[ManhuaFast] HTTP GET FAILED for " + url + ": " + e.message);
+    }
+
+    if (!response) {
+        throw new ScriptException("[ManhuaFast] NULL RESPONSE from GET " + url);
+    }
+    if (response.code && response.code >= 400) {
+        throw new ScriptException("[ManhuaFast] HTTP " + response.code + " from GET " + url +
+            (response.code === 403 ? " (likely Cloudflare block)" : "") +
+            (response.code === 503 ? " (likely Cloudflare challenge)" : ""));
+    }
+    if (!response.body || response.body.trim().length === 0) {
+        throw new ScriptException("[ManhuaFast] EMPTY BODY from GET " + url + " (HTTP " + (response.code || "unknown") + ")");
+    }
+
+    detectCloudflare(response.body, url);
+    return response;
+}
+
+/**
+ * HTTP POST with validation. Throws on any failure.
+ */
+function requestPOST(url, postBody, extraHeaders) {
+    const headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
+    let response;
+    try {
+        response = http.POST(url, postBody || "", headers, false);
+    } catch (e) {
+        throw new ScriptException("[ManhuaFast] HTTP POST FAILED for " + url + ": " + e.message);
+    }
+
+    if (!response) {
+        throw new ScriptException("[ManhuaFast] NULL RESPONSE from POST " + url);
+    }
+    if (response.code && response.code >= 400) {
+        throw new ScriptException("[ManhuaFast] HTTP " + response.code + " from POST " + url);
+    }
+    if (!response.body || response.body.trim().length === 0) {
+        throw new ScriptException("[ManhuaFast] EMPTY BODY from POST " + url);
+    }
+
+    detectCloudflare(response.body, url);
+    return response;
+}
+
+/**
+ * Parse HTML. Throws if input is empty or parsing fails.
+ */
+function parseHTML(html, url) {
+    if (!html || typeof html !== "string" || html.trim().length === 0) {
+        throw new ScriptException("[ManhuaFast] CANNOT PARSE: received empty/null HTML from " + url);
+    }
+    const doc = domParser.parseFromString(html, "text/html");
+    if (!doc) {
+        throw new ScriptException("[ManhuaFast] DOM PARSE RETURNED NULL for " + url);
+    }
+    return doc;
+}
+
+/**
+ * Assert that a querySelector result is not null.
+ * Always throws with context about WHERE the selector failed and on WHICH URL.
+ */
+function requireElement(parent, selector, context) {
+    if (!parent) {
+        throw new ScriptException("[ManhuaFast] PARENT ELEMENT IS NULL when querying '" + selector + "' in " + context);
+    }
+    const el = parent.querySelector(selector);
+    if (!el) {
+        throw new ScriptException("[ManhuaFast] ELEMENT NOT FOUND: '" + selector + "' in " + context +
+            " — The page structure may have changed, or Cloudflare returned a non-content page.");
+    }
+    return el;
+}
+
+/**
+ * Assert that querySelectorAll returns at least one result.
+ */
+function requireElements(parent, selector, context) {
+    if (!parent) {
+        throw new ScriptException("[ManhuaFast] PARENT ELEMENT IS NULL when querying '" + selector + "' in " + context);
+    }
+    const els = parent.querySelectorAll(selector);
+    if (!els || els.length === 0) {
+        throw new ScriptException("[ManhuaFast] NO ELEMENTS FOUND: '" + selector + "' in " + context +
+            " — Expected at least 1 match. The page structure may have changed or the response was blocked.");
+    }
+    return els;
+}
+
+/**
+ * Assert textContent exists and is non-empty.
+ */
+function requireText(element, context) {
+    if (!element) {
+        throw new ScriptException("[ManhuaFast] NULL ELEMENT when reading textContent in " + context);
+    }
+    const text = element.textContent;
+    if (text === null || text === undefined) {
+        throw new ScriptException("[ManhuaFast] textContent IS NULL/UNDEFINED on element in " + context);
+    }
+    return text.trim();
+}
+
+/**
+ * Assert getAttribute exists and is non-empty.
+ */
+function requireAttr(element, attr, context) {
+    if (!element) {
+        throw new ScriptException("[ManhuaFast] NULL ELEMENT when reading attribute '" + attr + "' in " + context);
+    }
+    const val = element.getAttribute(attr);
+    if (!val) {
+        throw new ScriptException("[ManhuaFast] ATTRIBUTE '" + attr + "' IS MISSING/EMPTY on element in " + context);
+    }
+    return val;
+}
+
+/**
+ * Get image src, trying data-src first, then src. Throws if neither exists.
+ */
+function requireImageSrc(imgElement, context) {
+    if (!imgElement) {
+        throw new ScriptException("[ManhuaFast] NULL IMG ELEMENT in " + context);
+    }
+    const dataSrc = imgElement.getAttribute("data-src");
+    if (dataSrc && dataSrc.trim().length > 0) return dataSrc.trim();
+
+    const src = imgElement.getAttribute("src");
+    if (src && src.trim().length > 0) return src.trim();
+
+    throw new ScriptException("[ManhuaFast] IMG HAS NO data-src OR src in " + context);
+}
+
+/**
+ * Optional image src — returns empty string instead of throwing.
+ * Use ONLY for getContentDetails where some <img> tags are decorative/nav.
+ */
+function optionalImageSrc(imgElement) {
+    if (!imgElement) return "";
+    const dataSrc = imgElement.getAttribute("data-src");
+    if (dataSrc && dataSrc.trim().length > 0) return dataSrc.trim();
+    const src = imgElement.getAttribute("src");
+    if (src && src.trim().length > 0) return src.trim();
+    return "";
+}
+
+// ============================================================
+// Timestamp extraction
+// ============================================================
 function extract_Timestamp(str) {
-    str = asString(str).trim();
     if (!str) return 0;
 
     const match = str.match(REGEX_HUMAN_AGO);
     if (match) {
         const value = parseInt(match[1]);
-        const now = Math.floor(new Date().getTime() / 1000);
+        if (isNaN(value)) return 0;
+        const now = parseInt(new Date().getTime() / 1000);
 
         switch (match[2]) {
-            case "second":
-            case "seconds":
-                return now - value;
-            case "min":
-            case "mins":
-                return now - value * 60;
-            case "hour":
-            case "hours":
-                return now - value * 60 * 60;
-            case "day":
-            case "days":
-                return now - value * 60 * 60 * 24;
-            case "week":
-            case "weeks":
-                return now - value * 60 * 60 * 24 * 7;
-            case "month":
-            case "months":
-                return now - value * 60 * 60 * 24 * 30; // approx
-            case "year":
-            case "years":
-                return now - value * 60 * 60 * 24 * 365; // approx
+            case "second": case "seconds": return now - value;
+            case "min":    case "mins":    return now - value * 60;
+            case "hour":   case "hours":   return now - value * 3600;
+            case "day":    case "days":    return now - value * 86400;
+            case "week":   case "weeks":   return now - value * 604800;
+            case "month":  case "months":  return now - value * 2592000;
+            case "year":   case "years":   return now - value * 31536000;
             default:
-                // Don't throw (avoid breaking on new units)
-                return 0;
+                throw new ScriptException("[ManhuaFast] UNKNOWN TIME UNIT: '" + match[2] + "' in timestamp string: " + str);
         }
     }
 
     const date = new Date(str);
-    if (!isNaN(date.getTime())) return Math.floor(date.getTime() / 1000);
+    if (!isNaN(date.getTime())) {
+        return Math.floor(date.getTime() / 1000);
+    }
 
+    // Genuinely unparseable date — not an error, just no date available
     return 0;
 }
 
-source.getHome = function (continuationToken) {
+// ============================================================
+// Plugin lifecycle
+// ============================================================
+source.enable = function (conf) {
+    this.config = conf;
+    console.log("[ManhuaFast] Plugin enabled");
+}
+
+// ============================================================
+// getHome
+// ============================================================
+source.getHome = function(continuationToken) {
     const homeUrl = "https://manhuafast.com/";
-    const html = httpGetOrThrow(homeUrl);
-    const doc = parseHtmlOrThrow(homeUrl, html);
+    const response = requestGET(homeUrl);
+    const doc = parseHTML(response.body, homeUrl);
 
+    const items = requireElements(doc, ".page-item-detail", "getHome(" + homeUrl + ")");
     const mangaItems = [];
-    const cards = qAll(doc, ".page-item-detail");
 
-    for (const item of cards) {
-        try {
-            const mangaAnchor = requireEl(q(item, ".post-title a"), "manga link", homeUrl, ".post-title a");
-            const chapterAnchor = requireEl(q(item, ".chapter-item .chapter a"), "chapter link", homeUrl, ".chapter-item .chapter a");
+    items.forEach((item, index) => {
+        const ctx = "getHome item[" + index + "]";
 
-            const mangaTitle = text(mangaAnchor);
-            const mangaLink = attr(mangaAnchor, "href");
-            const mangaId = mangaLink.split("/manga/")[1] || mangaLink;
+        const mangaAnchor = requireElement(item, ".post-title a", ctx);
+        const mangaChapterAnchor = requireElement(item, ".chapter-item .chapter a", ctx);
 
-            const mangaChapter = text(chapterAnchor);
-            const mangaChapterLink = attr(chapterAnchor, "href");
+        const mangaTitle = requireText(mangaAnchor, ctx + " .post-title a");
+        const mangaLink = requireAttr(mangaAnchor, "href", ctx + " .post-title a[href]");
 
-            const mangaPostedTime = extract_Timestamp(text(q(item, ".post-on")));
-
-            const img = q(item, "img");
-            const mangaThumbnail = attr(img, "data-src") || attr(img, "src");
-
-            const id = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
-            const author = new PlatformAuthorLink(id, mangaTitle, mangaLink, mangaThumbnail, 0, "");
-
-            const manga = {
-                id: id,
-                author: author,
-                name: mangaChapter,
-                datetime: mangaPostedTime,
-                thumbnails: [],
-                description: "",
-                url: mangaChapterLink,
-                images: [],
-                contentUrl: mangaChapterLink,
-                contentName: mangaChapter,
-                contentDescription: "",
-                contentProvider: author
-            };
-
-            mangaItems.push(new PlatformNestedMediaContent(manga));
-        } catch (e) {
-            console.log("Skipped home item due to parse error: " + asString(e));
+        const mangaIdParts = mangaLink.split('/manga/');
+        if (mangaIdParts.length < 2) {
+            throw new ScriptException("[ManhuaFast] UNEXPECTED URL FORMAT: '" + mangaLink + "' does not contain '/manga/' in " + ctx);
         }
-    }
+        const mangaId = mangaIdParts[1];
+
+        const mangaChapter = requireText(mangaChapterAnchor, ctx + " chapter anchor");
+        const mangaChapterLink = requireAttr(mangaChapterAnchor, "href", ctx + " chapter anchor[href]");
+
+        const postOnEl = requireElement(item, ".post-on", ctx);
+        const mangaPostedTime = extract_Timestamp(requireText(postOnEl, ctx + " .post-on"));
+
+        const imgEl = requireElement(item, "img", ctx);
+        const mangaThumbnail = requireImageSrc(imgEl, ctx + " img");
+
+        const id = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
+        const author = new PlatformAuthorLink(id, mangaTitle, mangaLink, mangaThumbnail, 0, "");
+
+        mangaItems.push(new PlatformNestedMediaContent({
+            id: id,
+            author: author,
+            name: mangaChapter,
+            datetime: mangaPostedTime,
+            thumbnails: [],
+            description: "",
+            url: mangaChapterLink,
+            images: [],
+            contentUrl: mangaChapterLink,
+            contentName: mangaChapter,
+            contentDescription: "",
+            contentProvider: author
+        }));
+    });
 
     return new ContentPager(mangaItems, false, { continuationToken });
-};
+}
 
-source.searchSuggestions = function (query) {
+// ============================================================
+// Search
+// ============================================================
+source.searchSuggestions = function(query) {
     return [];
-};
+}
 
-source.getSearchCapabilities = function () {
+source.getSearchCapabilities = function() {
     return {
         types: [Type.Feed.Mixed],
         sorts: [Type.Order.Chronological, "^release_time"],
         filters: []
     };
-};
+}
 
-source.search = function (query, type, order, filters, continuationToken) {
+source.search = function(query, type, order, filters, continuationToken) {
     return [];
-};
+}
 
-source.searchChannels = function (query, continuationToken) {
+// ============================================================
+// searchChannels
+// ============================================================
+source.searchChannels = function(query, continuationToken) {
     const searchUrl = "https://manhuafast.com/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
-    const html = httpGetOrThrow(searchUrl);
-    const doc = parseHtmlOrThrow(searchUrl, html);
+    const response = requestGET(searchUrl);
+    const doc = parseHTML(response.body, searchUrl);
 
+    // Search may legitimately return 0 results — don't require elements here
+    const anchors = doc.querySelectorAll(".post-title a");
     const channels = [];
-    for (const item of qAll(doc, ".post-title a")) {
-        try {
-            const href = attr(item, "href");
-            const mangaIdPart = href.split("/manga/")[1] || href;
 
-            const mangaId = new PlatformID(PLATFORM, mangaIdPart, config.id, PLATFORM_CLAIMTYPE);
-            const mangaName = text(item);
-
-            const channel = {
-                id: mangaId,
-                name: mangaName,
-                thumbnail: "",
-                banner: "",
-                subscibers: 0,
-                description: "",
-                url: href,
-                urlAlternatives: [],
-                links: {}
-            };
-
-            channels.push(new PlatformChannel(channel));
-        } catch (e) {
-            console.log("Skipped channel search item due to parse error: " + asString(e));
-        }
+    if (!anchors || anchors.length === 0) {
+        console.log("[ManhuaFast] Search returned 0 results for: " + query);
+        return new ChannelPager([], false, { query, continuationToken });
     }
 
+    anchors.forEach((item, index) => {
+        const ctx = "searchChannels[" + index + "] query='" + query + "'";
+
+        const href = requireAttr(item, "href", ctx + " a[href]");
+        const hrefParts = href.split('/manga/');
+        if (hrefParts.length < 2) {
+            throw new ScriptException("[ManhuaFast] UNEXPECTED SEARCH URL FORMAT: '" + href + "' in " + ctx);
+        }
+
+        const mangaId = new PlatformID(PLATFORM, hrefParts[1], config.id, PLATFORM_CLAIMTYPE);
+        const mangaName = requireText(item, ctx + " a text");
+
+        channels.push(new PlatformChannel({
+            id: mangaId,
+            name: mangaName,
+            thumbnail: "",
+            banner: "",
+            subscribers: 0,
+            description: "",
+            url: href,
+            urlAlternatives: [],
+            links: {}
+        }));
+    });
+
     return new ChannelPager(channels, false, { query, continuationToken });
-};
+}
 
-source.isChannelUrl = function (url) {
+// ============================================================
+// Channel methods
+// ============================================================
+source.isChannelUrl = function(url) {
     return REGEX_CHANNEL_URL.test(url);
-};
+}
 
-source.getChannel = function (url) {
-    const html = httpGetOrThrow(url);
-    const doc = parseHtmlOrThrow(url, html);
+source.getChannel = function(url) {
+    const ctx = "getChannel(" + url + ")";
+    const response = requestGET(url);
+    const doc = parseHTML(response.body, url);
 
-    const h1 = requireEl(q(doc, "h1"), "channel title (h1)", url, "h1");
-    const name = text(h1);
+    const h1 = requireElement(doc, "h1", ctx);
+    const name = requireText(h1, ctx + " h1");
 
-    const thumbEl =
-        q(doc, ".tab-summary img") ||
-        q(doc, ".summary_image img") ||
-        q(doc, "img");
+    const summaryImg = requireElement(doc, ".tab-summary img", ctx);
+    const channelThumbnail = requireImageSrc(summaryImg, ctx + " .tab-summary img");
 
-    const channelThumbnail = attr(thumbEl, "data-src") || attr(thumbEl, "src");
-
-    const mangaId = url.split("/manga/")[1] || url;
+    const mangaIdParts = url.split('/manga/');
+    if (mangaIdParts.length < 2) {
+        throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: '" + url + "' has no '/manga/' segment");
+    }
+    const mangaId = mangaIdParts[1];
     const id = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
 
     return new PlatformChannel({
@@ -294,92 +405,117 @@ source.getChannel = function (url) {
         urlAlternatives: [],
         links: {}
     });
-};
+}
 
 source.getChannelCapabilities = () => {
     return {
         types: [Type.Feed.Mixed],
         sorts: [Type.Order.Chronological]
     };
-};
+}
 
-source.getChannelContents = function (url, type, order, filters, continuationToken) {
-    // Some WP Manga themes return title/thumb from the normal page, while chapters are AJAX.
-    // Be defensive: fetch the base page for metadata (less likely to break).
-    const baseHtml = httpGetOrThrow(url);
-    const baseDoc = parseHtmlOrThrow(url, baseHtml);
+// ============================================================
+// getChannelContents
+// ============================================================
+source.getChannelContents = function(url, type, order, filters, continuationToken) {
+    const ctx = "getChannelContents(" + url + ")";
 
-    const titleEl = q(baseDoc, "h1") || q(baseDoc, ".post-title h1") || q(baseDoc, ".post-title");
-    const mangaTitle = text(titleEl) || "Unknown Title";
+    // GET the channel page for metadata
+    const getResponse = requestGET(url);
+    const getDoc = parseHTML(getResponse.body, url);
 
-    const imgEl = q(baseDoc, ".summary_image img") || q(baseDoc, ".tab-summary img") || q(baseDoc, "img");
-    const mangaThumbnail = attr(imgEl, "data-src") || attr(imgEl, "src");
-
-    const mangaId = url.split("/manga/")[1] || url;
-    const authorId = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
-    const author = new PlatformAuthorLink(authorId, mangaTitle, url, mangaThumbnail, 0, "");
-
-    // POST returns the chapter list HTML
-    const postUrl = url + "ajax/chapters";
-    const chaptersHtml = httpPostOrThrow(postUrl, "", {});
-    const doc = parseHtmlOrThrow(postUrl, chaptersHtml);
-
-    const chapters = [];
-    for (const item of qAll(doc, "li")) {
-        try {
-            const a = requireEl(q(item, "a"), "chapter anchor", postUrl, "li a");
-            const mangaChapter = text(a);
-            const mangaChapterLink = attr(a, "href");
-
-            const timeEl = q(item, "i") || q(item, ".chapter-release-date") || q(item, "span");
-            const mangaPostedTime = extract_Timestamp(text(timeEl));
-
-            // Use URL as stable ID, fallback to chapter name
-            const chapterId = new PlatformID(PLATFORM, mangaChapterLink || mangaChapter, config.id, PLATFORM_CLAIMTYPE);
-
-            const chapter = {
-                id: chapterId,
-                author: author,
-                name: mangaChapter,
-                datetime: mangaPostedTime,
-                thumbnails: [],
-                description: "",
-                url: mangaChapterLink,
-                images: [],
-                contentUrl: mangaChapterLink,
-                contentName: mangaChapter,
-                contentDescription: ""
-            };
-
-            chapters.push(new PlatformNestedMediaContent(chapter));
-        } catch (e) {
-            console.log("Skipped chapter due to parse error: " + asString(e));
-        }
+    const mangaIdParts = url.split('/manga/');
+    if (mangaIdParts.length < 2) {
+        throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: no '/manga/' in " + url);
     }
+    const mangaId = mangaIdParts[1];
+
+    const h1 = requireElement(getDoc, "h1", ctx);
+    const mangaTitle = requireText(h1, ctx + " h1");
+
+    const summaryImg = requireElement(getDoc, ".summary_image img", ctx);
+    const mangaThumbnail = requireImageSrc(summaryImg, ctx + " .summary_image img");
+
+    const AuthorId = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
+    const author = new PlatformAuthorLink(AuthorId, mangaTitle, url, mangaThumbnail, 0, "");
+
+    // POST to get the chapter list
+    const chapterUrl = url + "ajax/chapters/";
+    const postResponse = requestPOST(chapterUrl, "");
+    const postDoc = parseHTML(postResponse.body, chapterUrl);
+
+    const listItems = requireElements(postDoc, "li", ctx + " chapters POST");
+    const chapters = [];
+
+    listItems.forEach((item, index) => {
+        const itemCtx = ctx + " chapter[" + index + "]";
+
+        const anchor = requireElement(item, "a", itemCtx);
+        const mangaChapter = requireText(anchor, itemCtx + " a text");
+        const mangaChapterLink = requireAttr(anchor, "href", itemCtx + " a[href]");
+
+        const iEl = requireElement(item, "i", itemCtx);
+        const mangaPostedTime = extract_Timestamp(requireText(iEl, itemCtx + " i"));
+
+        const chapterId = new PlatformID(PLATFORM, mangaChapter, config.id, PLATFORM_CLAIMTYPE);
+
+        chapters.push(new PlatformNestedMediaContent({
+            id: chapterId,
+            author: author,
+            name: mangaChapter,
+            datetime: mangaPostedTime,
+            thumbnails: [],
+            description: "",
+            url: mangaChapterLink,
+            images: [],
+            contentUrl: mangaChapterLink,
+            contentName: mangaChapter,
+            contentDescription: ""
+        }));
+    });
 
     return new ContentPager(chapters, false, { continuationToken });
-};
+}
 
-source.isContentDetailsUrl = function (url) {
-    // keep your preference
+// ============================================================
+// Content details
+// ============================================================
+source.isContentDetailsUrl = function(url) {
     return false;
-};
+}
 
-source.getContentDetails = function (url) {
-    // If you ever enable this, keep it safe + CF-aware
-    const html = httpGetOrThrow(url);
-    const doc = parseHtmlOrThrow(url, html);
+source.getContentDetails = function(url) {
+    const ctx = "getContentDetails(" + url + ")";
+    const response = requestGET(url);
+    let html = response.body.replace(/\s+/g, ' ').trim();
+    const doc = parseHTML(html, url);
 
-    const mangaId = url.split("/manga/")[1] || url;
+    const mangaIdParts = url.split('/manga/');
+    if (mangaIdParts.length < 2) {
+        throw new ScriptException("[ManhuaFast] UNEXPECTED CONTENT URL: no '/manga/' in " + url);
+    }
+    const mangaId = mangaIdParts[1];
+
     const images = [];
     const thumbnailsArray = [];
 
-    for (const item of qAll(doc, "img")) {
-        const dataSrc = attr(item, "data-src") || attr(item, "src");
-        if (dataSrc) {
-            images.push(dataSrc);
-            thumbnailsArray.push(new Thumbnails([new Thumbnail(dataSrc, 1080)]));
+    const imgElements = doc.querySelectorAll("img");
+    if (!imgElements || imgElements.length === 0) {
+        throw new ScriptException("[ManhuaFast] NO IMG ELEMENTS FOUND in " + ctx +
+            " — Page may be blocked or chapter has no images.");
+    }
+
+    imgElements.forEach((item, index) => {
+        // Some <img> are nav/decorative, so don't require src on every one
+        const imgSrc = optionalImageSrc(item);
+        if (imgSrc) {
+            images.push(imgSrc);
+            thumbnailsArray.push(new Thumbnails([new Thumbnail(imgSrc, 1080)]));
         }
+    });
+
+    if (images.length === 0) {
+        throw new ScriptException("[ManhuaFast] FOUND " + imgElements.length + " <img> tags but NONE had data-src or src in " + ctx);
     }
 
     const id = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
@@ -397,8 +533,11 @@ source.getContentDetails = function (url) {
         textType: Type.Text.RAW,
         content: ""
     });
-};
+}
 
-source.getComments = function (url, continuationToken) {
+// ============================================================
+// Comments
+// ============================================================
+source.getComments = function(url, continuationToken) {
     return [];
-};
+}

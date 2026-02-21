@@ -28,25 +28,7 @@ function detectCloudflare(body, url) {
 
     // Cloudflare JS challenge
     if (body.indexOf("Just a moment...") !== -1 || body.indexOf("cf-browser-verification") !== -1) {
-        throw new ScriptException("[ManhuaFast] CLOUDFLARE JS CHALLENGE at " + url +
-            " — The site is presenting a Cloudflare browser verification page instead of content." +
-            " Try: 1) Open " + url + " in Grayjay's built-in browser/WebView to get a cf_clearance cookie," +
-            " 2) Wait and retry, 3) Use a different network/VPN.");
-    }
-    // Cloudflare captcha/attention page
-    if (body.indexOf("Attention Required! | Cloudflare") !== -1 || body.indexOf("cf-captcha-container") !== -1) {
-        throw new ScriptException("[ManhuaFast] CLOUDFLARE CAPTCHA at " + url +
-            " — Cloudflare is requiring a captcha. Open this URL in a browser first to solve it.");
-    }
-    // Cloudflare generic block
-    if (body.indexOf("Enable JavaScript and cookies to continue") !== -1) {
-        throw new ScriptException("[ManhuaFast] CLOUDFLARE BLOCK at " + url +
-            " — The response is a Cloudflare interstitial, not actual page content.");
-    }
-    // Cloudflare error page (1020 Access Denied, etc)
-    if (body.indexOf("error code: 10") !== -1 && body.indexOf("cloudflare") !== -1) {
-        throw new ScriptException("[ManhuaFast] CLOUDFLARE ACCESS DENIED at " + url +
-            " — Cloudflare returned an error page. Your IP may be blocked.");
+        throw new ScriptException("Captcha required");
     }
 }
 
@@ -541,3 +523,4 @@ source.getContentDetails = function(url) {
 source.getComments = function(url, continuationToken) {
     return [];
 }
+

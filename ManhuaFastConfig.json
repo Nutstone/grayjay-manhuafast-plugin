@@ -27,7 +27,7 @@
 
 	"authentication": {
 		"loginUrl": "https://manhuafast.com",
-		"completedUrl": "https://manhuafast.com",
 		"cookiesToFind": ["cf_clearance"]
 	}
 }
+

@@ -3,21 +3,31 @@
 	"description": "Viewer for manhua fast",
 	"author": "nuthug",
 	"authorUrl": "https://raw.githubusercontent.com/Nutstone/",
-	
+	"platformUrl": "https://manhuafast.com",
+
 	"sourceUrl": "https://nutstone.github.io/grayjay-manhuafast-plugin/ManhuaFastConfig.json",
 	"repositoryUrl": "https://nutstone.github.io/grayjay-manhuafast-plugin/",
 	"scriptUrl": "./ManhuaFastScript.js",
-	"version": 1,
-	
+	"version": 2,
+
 	"iconUrl": "./d7dfe5ef-4332-4ffa-b890-1b703d22ca0d.png",
 	"id": "cd1dff4b-89d3-4326-8c8c-930da64cec5c",
-	
+
 	"scriptSignature": "",
 	"scriptPublicKey": "",
 	"packages": ["Http", "DOMParser", "Utilities"],
-	
+
 	"allowEval": false,
 	"allowUrls": [
-		"manhuafast.com"
-	]
+		"manhuafast.com",
+		"www.manhuafast.com"
+	],
+
+	"captchaUrl": "https://manhuafast.com",
+
+	"authentication": {
+		"loginUrl": "https://manhuafast.com",
+		"completedUrl": "https://manhuafast.com",
+		"cookiesToFind": ["cf_clearance"]
+	}
 }

@@ -370,7 +370,7 @@ source.getChannel = function(url) {
 }
 
 source.getChannelCapabilities = function() {
-    return { types: [Type.Feed.Mixed], sorts: [Type.Order.Chronological] };
+    return { types: [Type.Feed.Mixed], sorts: [Type.Order.Chronological, "Oldest first"] };
 }
 
 // ============================================================
@@ -422,13 +422,22 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
         }));
     });
 
+    // Sort chapters based on the order parameter
+    if (order === "Oldest first") {
+        chapters.reverse();
+    }
+
     return new ContentPager(chapters, false, { continuationToken: continuationToken });
 }
 
 // ============================================================
-// Content details
+// Channel contents sorting helper
 // ============================================================
+// Note: ManhuaFast returns chapters newest-first by default from its ajax endpoint.
+// When "Oldest first" is selected, we simply reverse the array.
+
 source.isContentDetailsUrl = function(url) { return false; }
+// Always false so the URL is opened in web view instead of app plugin view
 
 source.getContentDetails = function(url) {
     url = toPrimaryUrl(url);

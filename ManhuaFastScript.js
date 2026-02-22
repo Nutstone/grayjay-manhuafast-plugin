@@ -1,116 +1,111 @@
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 const REGEX_HUMAN_AGO = new RegExp("([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago");
-const REGEX_CHANNEL_URL = new RegExp("^https:\/\/manhuafast\.com\/manga\/([^\/]+)\/$");
-const REGEX_CONTENT_URL = new RegExp("^https:\/\/manhuafast\.com\/manga\/([^\/]+(?:\/[^\/]+)+)\/$");
+const REGEX_CHANNEL_URL = new RegExp("^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/$");
+
+const BASE_URL_PRIMARY = "https://manhuafast.com";
+const BASE_URL_FALLBACK = "https://manhuafast.net";
 
 const config = {};
 
-// Standard browser User-Agent to reduce Cloudflare blocks.
 const DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://manhuafast.com/"
+    "Accept-Language": "en-US,en;q=0.5"
 };
 
 // ============================================================
-// CLOUDFLARE DETECTION + CAPTCHA TRIGGER
+// HTTP WRAPPERS — Try primary (.com), fall back to (.net) on failure
 // ============================================================
 
 /**
- * Returns true if the response body looks like a Cloudflare challenge/block page.
- * Pure detection — does NOT throw.
+ * If `url` starts with BASE_URL_PRIMARY, return the equivalent
+ * BASE_URL_FALLBACK url. Otherwise return null (no fallback available).
  */
-function isCloudflare(body) {
-    if (!body || typeof body !== "string") return false;
-    if (body.indexOf("Just a moment...") !== -1) return true;
-    if (body.indexOf("cf-browser-verification") !== -1) return true;
-    if (body.indexOf("Attention Required! | Cloudflare") !== -1) return true;
-    if (body.indexOf("cf-captcha-container") !== -1) return true;
-    if (body.indexOf("Enable JavaScript and cookies to continue") !== -1) return true;
-    if (body.indexOf("challenges.cloudflare.com") !== -1) return true;
-    if (body.indexOf("cf-error-details") !== -1) return true;
-    if (body.indexOf("error code: 10") !== -1 && body.indexOf("cloudflare") !== -1) return true;
-    return false;
+function getFallbackUrl(url) {
+    if (url.indexOf(BASE_URL_PRIMARY) === 0) {
+        return url.replace(BASE_URL_PRIMARY, BASE_URL_FALLBACK);
+    }
+    return null;
 }
 
-/**
- * Log the real reason, then throw the EXACT magic string that Grayjay's engine
- * pattern-matches in InterceptExceptions to open the captcha WebView.
- *
- * ANY other string (like "[ManhuaFast] Cloudflare blocked") will NOT trigger it.
- */
-function throwCaptchaRequired(url, httpCode) {
-    console.log("[ManhuaFast] CLOUDFLARE DETECTED at " + url +
-        " (HTTP " + (httpCode || "?") + ") — triggering captcha WebView");
-    throw new ScriptException("Captcha required");
+function isUsableResponse(response) {
+    if (!response) return false;
+    if (response.code && response.code >= 400) return false;
+    if (!response.body || response.body.trim().length === 0) return false;
+    return true;
 }
-
-// ============================================================
-// HTTP WRAPPERS — Cloudflare check runs BEFORE generic error handling
-// ============================================================
 
 function requestGET(url, extraHeaders) {
-    const headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
-    let response;
+    var headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
+    headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0
+        ? BASE_URL_FALLBACK + "/"
+        : BASE_URL_PRIMARY + "/";
+
+    var response;
     try {
         response = http.GET(url, headers, false);
     } catch (e) {
-        throw new ScriptException("[ManhuaFast] HTTP GET FAILED for " + url + ": " + e.message);
+        response = null;
     }
 
-    if (!response) {
-        throw new ScriptException("[ManhuaFast] NULL RESPONSE from GET " + url);
+    if (isUsableResponse(response)) return response;
+
+    // Try fallback domain
+    var fallbackUrl = getFallbackUrl(url);
+    if (fallbackUrl) {
+        console.log("[ManhuaFast] Primary request failed for " + url + " — trying fallback: " + fallbackUrl);
+        headers["Referer"] = BASE_URL_FALLBACK + "/";
+        try {
+            response = http.GET(fallbackUrl, headers, false);
+        } catch (e) {
+            throw new ScriptException("[ManhuaFast] HTTP GET FAILED for both " + url + " and " + fallbackUrl + ": " + e.message);
+        }
+        if (isUsableResponse(response)) return response;
+        throw new ScriptException("[ManhuaFast] HTTP GET FAILED for both " + url +
+            " (primary) and " + fallbackUrl + " (fallback). Last HTTP code: " + (response ? response.code : "null"));
     }
 
-    // Check for Cloudflare FIRST on any response (403, 503, or even 200 challenge pages)
-    if (response.body && isCloudflare(response.body)) {
-        throwCaptchaRequired(url, response.code);
-    }
-
-    // Non-Cloudflare HTTP errors
-    if (response.code && response.code >= 400) {
-        throw new ScriptException("[ManhuaFast] HTTP " + response.code + " from GET " + url);
-    }
-    if (!response.body || response.body.trim().length === 0) {
-        throw new ScriptException("[ManhuaFast] EMPTY BODY from GET " + url +
-            " (HTTP " + (response.code || "unknown") + ")");
-    }
-
-    return response;
+    // No fallback available (URL wasn't on the primary domain)
+    throw new ScriptException("[ManhuaFast] HTTP GET FAILED for " + url +
+        " — HTTP " + (response ? response.code : "null/error"));
 }
 
 function requestPOST(url, postBody, extraHeaders) {
-    const headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
-    let response;
+    var headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
+    headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0
+        ? BASE_URL_FALLBACK + "/"
+        : BASE_URL_PRIMARY + "/";
+
+    var response;
     try {
         response = http.POST(url, postBody || "", headers, false);
     } catch (e) {
-        throw new ScriptException("[ManhuaFast] HTTP POST FAILED for " + url + ": " + e.message);
+        response = null;
     }
 
-    if (!response) {
-        throw new ScriptException("[ManhuaFast] NULL RESPONSE from POST " + url);
+    if (isUsableResponse(response)) return response;
+
+    var fallbackUrl = getFallbackUrl(url);
+    if (fallbackUrl) {
+        console.log("[ManhuaFast] Primary POST failed for " + url + " — trying fallback: " + fallbackUrl);
+        headers["Referer"] = BASE_URL_FALLBACK + "/";
+        try {
+            response = http.POST(fallbackUrl, postBody || "", headers, false);
+        } catch (e) {
+            throw new ScriptException("[ManhuaFast] HTTP POST FAILED for both " + url + " and " + fallbackUrl + ": " + e.message);
+        }
+        if (isUsableResponse(response)) return response;
+        throw new ScriptException("[ManhuaFast] HTTP POST FAILED for both " + url +
+            " (primary) and " + fallbackUrl + " (fallback). Last HTTP code: " + (response ? response.code : "null"));
     }
 
-    // Check for Cloudflare FIRST
-    if (response.body && isCloudflare(response.body)) {
-        throwCaptchaRequired(url, response.code);
-    }
-
-    if (response.code && response.code >= 400) {
-        throw new ScriptException("[ManhuaFast] HTTP " + response.code + " from POST " + url);
-    }
-    if (!response.body || response.body.trim().length === 0) {
-        throw new ScriptException("[ManhuaFast] EMPTY BODY from POST " + url);
-    }
-
-    return response;
+    throw new ScriptException("[ManhuaFast] HTTP POST FAILED for " + url +
+        " — HTTP " + (response ? response.code : "null/error"));
 }
 
 // ============================================================
-// DOM HELPERS — All throw with context on failure. No silent fallbacks.
+// DOM HELPERS
 // ============================================================
 
 function parseHTML(html, url) {
@@ -130,8 +125,7 @@ function requireElement(parent, selector, context) {
     }
     var el = parent.querySelector(selector);
     if (!el) {
-        throw new ScriptException("[ManhuaFast] ELEMENT NOT FOUND: '" + selector + "' in " + context +
-            " — Page structure may have changed or Cloudflare returned a non-content page.");
+        throw new ScriptException("[ManhuaFast] ELEMENT NOT FOUND: '" + selector + "' in " + context);
     }
     return el;
 }
@@ -142,8 +136,7 @@ function requireElements(parent, selector, context) {
     }
     var els = parent.querySelectorAll(selector);
     if (!els || els.length === 0) {
-        throw new ScriptException("[ManhuaFast] NO ELEMENTS FOUND: '" + selector + "' in " + context +
-            " — Expected at least 1 match.");
+        throw new ScriptException("[ManhuaFast] NO ELEMENTS FOUND: '" + selector + "' in " + context);
     }
     return els;
 }
@@ -220,6 +213,17 @@ function extract_Timestamp(str) {
 }
 
 // ============================================================
+// URL normalization helper — ensures all internal URLs use the primary domain
+// ============================================================
+function toPrimaryUrl(url) {
+    if (!url) return url;
+    if (url.indexOf(BASE_URL_FALLBACK) === 0) {
+        return url.replace(BASE_URL_FALLBACK, BASE_URL_PRIMARY);
+    }
+    return url;
+}
+
+// ============================================================
 // Plugin lifecycle
 // ============================================================
 source.enable = function (conf) {
@@ -231,7 +235,7 @@ source.enable = function (conf) {
 // getHome
 // ============================================================
 source.getHome = function(continuationToken) {
-    var homeUrl = "https://manhuafast.com/";
+    var homeUrl = BASE_URL_PRIMARY + "/";
     var response = requestGET(homeUrl);
     var doc = parseHTML(response.body, homeUrl);
 
@@ -245,7 +249,7 @@ source.getHome = function(continuationToken) {
         var mangaChapterAnchor = requireElement(item, ".chapter-item .chapter a", ctx);
 
         var mangaTitle = requireText(mangaAnchor, ctx + " .post-title a");
-        var mangaLink = requireAttr(mangaAnchor, "href", ctx + " .post-title a[href]");
+        var mangaLink = toPrimaryUrl(requireAttr(mangaAnchor, "href", ctx + " .post-title a[href]"));
 
         var mangaIdParts = mangaLink.split('/manga/');
         if (mangaIdParts.length < 2) {
@@ -254,7 +258,7 @@ source.getHome = function(continuationToken) {
         var mangaId = mangaIdParts[1];
 
         var mangaChapter = requireText(mangaChapterAnchor, ctx + " chapter anchor");
-        var mangaChapterLink = requireAttr(mangaChapterAnchor, "href", ctx + " chapter anchor[href]");
+        var mangaChapterLink = toPrimaryUrl(requireAttr(mangaChapterAnchor, "href", ctx + " chapter anchor[href]"));
 
         var postOnEl = requireElement(item, ".post-on", ctx);
         var mangaPostedTime = extract_Timestamp(requireText(postOnEl, ctx + " .post-on"));
@@ -303,7 +307,7 @@ source.search = function(query, type, order, filters, continuationToken) { retur
 // searchChannels
 // ============================================================
 source.searchChannels = function(query, continuationToken) {
-    var searchUrl = "https://manhuafast.com/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
+    var searchUrl = BASE_URL_PRIMARY + "/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
     var response = requestGET(searchUrl);
     var doc = parseHTML(response.body, searchUrl);
 
@@ -317,7 +321,7 @@ source.searchChannels = function(query, continuationToken) {
 
     anchors.forEach(function(item, index) {
         var ctx = "searchChannels[" + index + "] query='" + query + "'";
-        var href = requireAttr(item, "href", ctx + " a[href]");
+        var href = toPrimaryUrl(requireAttr(item, "href", ctx + " a[href]"));
         var hrefParts = href.split('/manga/');
         if (hrefParts.length < 2) {
             throw new ScriptException("[ManhuaFast] UNEXPECTED SEARCH URL: '" + href + "' in " + ctx);
@@ -342,6 +346,7 @@ source.searchChannels = function(query, continuationToken) {
 source.isChannelUrl = function(url) { return REGEX_CHANNEL_URL.test(url); }
 
 source.getChannel = function(url) {
+    url = toPrimaryUrl(url);
     var ctx = "getChannel(" + url + ")";
     var response = requestGET(url);
     var doc = parseHTML(response.body, url);
@@ -372,6 +377,7 @@ source.getChannelCapabilities = function() {
 // getChannelContents
 // ============================================================
 source.getChannelContents = function(url, type, order, filters, continuationToken) {
+    url = toPrimaryUrl(url);
     var ctx = "getChannelContents(" + url + ")";
 
     var getResponse = requestGET(url);
@@ -402,7 +408,7 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
         var itemCtx = ctx + " chapter[" + index + "]";
         var anchor = requireElement(item, "a", itemCtx);
         var mangaChapter = requireText(anchor, itemCtx + " a text");
-        var mangaChapterLink = requireAttr(anchor, "href", itemCtx + " a[href]");
+        var mangaChapterLink = toPrimaryUrl(requireAttr(anchor, "href", itemCtx + " a[href]"));
         var iEl = requireElement(item, "i", itemCtx);
         var mangaPostedTime = extract_Timestamp(requireText(iEl, itemCtx + " i"));
         var chapterId = new PlatformID(PLATFORM, mangaChapter, config.id, PLATFORM_CLAIMTYPE);
@@ -425,6 +431,7 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
 source.isContentDetailsUrl = function(url) { return false; }
 
 source.getContentDetails = function(url) {
+    url = toPrimaryUrl(url);
     var ctx = "getContentDetails(" + url + ")";
     var response = requestGET(url);
     var html = response.body.replace(/\s+/g, ' ').trim();

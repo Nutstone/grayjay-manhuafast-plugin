@@ -327,13 +327,12 @@ source.getHome = function (continuationToken) {
 
         var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWebDetails({
+        var webItem = new PlatformWeb({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterUrl,
-          thumbnails: new Thumbnails([new Thumbnail(thumbUrl, 0)]),
+          url: chapterUrl
         });
 
         logContentItem("getHome item[" + index + "]", webItem);
@@ -545,3 +544,4 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
     throw e;
   }
 };
+

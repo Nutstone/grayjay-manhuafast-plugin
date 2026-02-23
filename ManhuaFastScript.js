@@ -521,11 +521,13 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 // ============================================================
 
 source.isContentDetailsUrl = function (url) {
-  return REGEX_CHAPTER_URL.test(asUrl(url));
+  log("isContentDetailsUrl");
+  return true;
 };
 
 source.getContentDetails = function (url) {
   // Grayjay may pass a string URL or a PlatformID
+  log("getContenDetails");
   url = toPrimaryUrl(asUrl(url));
 
   // Optional fetch for title only (and to fail early with a clearer error if chapter is unreachable)
@@ -557,5 +559,6 @@ source.getContentDetails = function (url) {
 source.getComments = function (url, continuationToken) {
   return [];
 };
+
 
 

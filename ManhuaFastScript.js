@@ -1,13 +1,13 @@
+// ManhuaFast Grayjay Plugin (WEB chapters -> WebDetailFragment / in-app browser)
+// Logging-heavy debug build
+
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 
-const BASE_URL_PRIMARY = "https://manhuafast.net";
-const BASE_URL_FALLBACK = "https://manhuafast.com";
+const BASE_URL_PRIMARY = "https://manhuafast.com";
+const BASE_URL_FALLBACK = "https://manhuafast.net";
 
-// /manga/<slug>/
 const REGEX_CHANNEL_URL = new RegExp("^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/([^\\/]+)\\/?$");
-
-// /manga/<slug>/<chapter>/ (+ optional ?query or #hash)
 const REGEX_CHAPTER_URL = new RegExp(
   "^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/[^\\/]+\\/[^\\/]+\\/?(?:[?#].*)?$"
 );
@@ -25,13 +25,59 @@ const DEFAULT_HEADERS = {
 
 const ORDER_OLDEST = "oldest";
 
-const config = {
-  id: undefined, // plugin id
-};
+const config = { id: undefined };
 
-// ============================================================
-// HTTP (primary -> fallback)
-// ============================================================
+// ===========================
+// Debug logging helpers
+// ===========================
+
+const DEBUG = true;
+
+function log(msg) {
+  if (!DEBUG) return;
+  try { console.log("[ManhuaFast][DBG] " + msg); } catch (e) {}
+}
+
+function logObj(label, obj) {
+  if (!DEBUG) return;
+  try {
+    var s = "";
+    try { s = JSON.stringify(obj); } catch (e) { s = String(obj); }
+    console.log("[ManhuaFast][DBG] " + label + ": " + s);
+  } catch (e) {}
+}
+
+function describeValue(v) {
+  try {
+    if (v === null) return "null";
+    if (v === undefined) return "undefined";
+    var t = typeof v;
+    if (t === "string") return "string(" + v + ")";
+    if (t !== "object") return t + "(" + String(v) + ")";
+    var keys = [];
+    try { keys = Object.keys(v); } catch (e) {}
+    var ctor = (v && v.constructor && v.constructor.name) ? v.constructor.name : "unknown";
+    return "object ctor=" + ctor + " keys=[" + keys.join(",") + "]";
+  } catch (e) {
+    return "uninspectable";
+  }
+}
+
+function logContentItem(prefix, item) {
+  try {
+    var pid = item && item.id ? item.id : null;
+    var idValue = pid && pid.value ? pid.value : "(no id.value)";
+    var ptype = item && item.plugin_type ? item.plugin_type : "(no plugin_type)";
+    var ctype = (item && item.contentType !== undefined) ? item.contentType : "(no contentType)";
+    log(prefix + " plugin_type=" + ptype + " contentType=" + ctype + " id=" + idValue + " url=" + (item ? item.url : ""));
+  } catch (e) {
+    log(prefix + " (failed to inspect item): " + e);
+  }
+}
+
+// ===========================
+// HTTP
+// ===========================
 
 function getFallbackUrl(url) {
   if (url && url.indexOf(BASE_URL_PRIMARY) === 0) {
@@ -52,11 +98,14 @@ function requestGET(url, extraHeaders) {
   headers["Referer"] =
     url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
+  log("HTTP GET -> " + url);
   var response = null;
 
   try {
     response = http.GET(url, headers, false);
+    log("HTTP GET primary code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
+    log("HTTP GET primary exception: " + (e && e.message ? e.message : e));
     response = null;
   }
 
@@ -65,26 +114,19 @@ function requestGET(url, extraHeaders) {
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP GET FAILED for " +
-        url +
-        " — HTTP " +
-        (response ? response.code : "null/error")
+      "[ManhuaFast] HTTP GET FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
     );
   }
 
-  console.log("[ManhuaFast] Primary request failed for " + url + " — trying fallback: " + fallbackUrl);
+  log("HTTP GET trying fallback -> " + fallbackUrl);
   headers["Referer"] = BASE_URL_FALLBACK + "/";
 
   try {
     response = http.GET(fallbackUrl, headers, false);
+    log("HTTP GET fallback code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP GET FAILED for both " +
-        url +
-        " and " +
-        fallbackUrl +
-        ": " +
-        (e && e.message ? e.message : e)
+      "[ManhuaFast] HTTP GET FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e)
     );
   }
 
@@ -93,9 +135,9 @@ function requestGET(url, extraHeaders) {
   throw new ScriptException(
     "[ManhuaFast] HTTP GET FAILED for both " +
       url +
-      " (primary) and " +
+      " and " +
       fallbackUrl +
-      " (fallback). Last HTTP code: " +
+      ". Last HTTP code: " +
       (response ? response.code : "null")
   );
 }
@@ -105,11 +147,14 @@ function requestPOST(url, postBody, extraHeaders) {
   headers["Referer"] =
     url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
+  log("HTTP POST -> " + url + " bodyLen=" + ((postBody || "").length));
   var response = null;
 
   try {
     response = http.POST(url, postBody || "", headers, false);
+    log("HTTP POST primary code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
+    log("HTTP POST primary exception: " + (e && e.message ? e.message : e));
     response = null;
   }
 
@@ -118,26 +163,19 @@ function requestPOST(url, postBody, extraHeaders) {
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP POST FAILED for " +
-        url +
-        " — HTTP " +
-        (response ? response.code : "null/error")
+      "[ManhuaFast] HTTP POST FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
     );
   }
 
-  console.log("[ManhuaFast] Primary POST failed for " + url + " — trying fallback: " + fallbackUrl);
+  log("HTTP POST trying fallback -> " + fallbackUrl);
   headers["Referer"] = BASE_URL_FALLBACK + "/";
 
   try {
     response = http.POST(fallbackUrl, postBody || "", headers, false);
+    log("HTTP POST fallback code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP POST FAILED for both " +
-        url +
-        " and " +
-        fallbackUrl +
-        ": " +
-        (e && e.message ? e.message : e)
+      "[ManhuaFast] HTTP POST FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e)
     );
   }
 
@@ -146,20 +184,20 @@ function requestPOST(url, postBody, extraHeaders) {
   throw new ScriptException(
     "[ManhuaFast] HTTP POST FAILED for both " +
       url +
-      " (primary) and " +
+      " and " +
       fallbackUrl +
-      " (fallback). Last HTTP code: " +
+      ". Last HTTP code: " +
       (response ? response.code : "null")
   );
 }
 
-// ============================================================
+// ===========================
 // DOM helpers
-// ============================================================
+// ===========================
 
 function parseHTML(html, url) {
   if (!html || typeof html !== "string" || html.trim().length === 0) {
-    throw new ScriptException("[ManhuaFast] CANNOT PARSE: received empty/null HTML from " + url);
+    throw new ScriptException("[ManhuaFast] CANNOT PARSE: empty/null HTML from " + url);
   }
   var doc = domParser.parseFromString(html, "text/html");
   if (!doc) throw new ScriptException("[ManhuaFast] DOM PARSE RETURNED NULL for " + url);
@@ -167,65 +205,60 @@ function parseHTML(html, url) {
 }
 
 function requireElement(parent, selector, context) {
-  if (!parent) throw new ScriptException("[ManhuaFast] PARENT NULL for selector '" + selector + "' in " + context);
+  if (!parent) throw new ScriptException("[ManhuaFast] PARENT NULL for '" + selector + "' in " + context);
   var el = parent.querySelector(selector);
-  if (!el) throw new ScriptException("[ManhuaFast] ELEMENT NOT FOUND: '" + selector + "' in " + context);
+  if (!el) throw new ScriptException("[ManhuaFast] ELEMENT NOT FOUND '" + selector + "' in " + context);
   return el;
 }
 
 function requireElements(parent, selector, context) {
-  if (!parent) throw new ScriptException("[ManhuaFast] PARENT NULL for selector '" + selector + "' in " + context);
+  if (!parent) throw new ScriptException("[ManhuaFast] PARENT NULL for '" + selector + "' in " + context);
   var els = parent.querySelectorAll(selector);
-  if (!els || els.length === 0) throw new ScriptException("[ManhuaFast] NO ELEMENTS FOUND: '" + selector + "' in " + context);
+  if (!els || els.length === 0) throw new ScriptException("[ManhuaFast] NO ELEMENTS '" + selector + "' in " + context);
   return els;
 }
 
 function requireText(element, context) {
-  if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT reading textContent in " + context);
+  if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT textContent in " + context);
   var text = element.textContent;
-  if (text === null || text === undefined) {
-    throw new ScriptException("[ManhuaFast] textContent NULL/UNDEFINED in " + context);
-  }
+  if (text === null || text === undefined) throw new ScriptException("[ManhuaFast] textContent null in " + context);
   return String(text).trim();
 }
 
 function requireAttr(element, attr, context) {
-  if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT reading attr '" + attr + "' in " + context);
+  if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT attr '" + attr + "' in " + context);
   var val = element.getAttribute(attr);
-  if (!val) throw new ScriptException("[ManhuaFast] ATTRIBUTE '" + attr + "' MISSING/EMPTY in " + context);
+  if (!val) throw new ScriptException("[ManhuaFast] ATTRIBUTE '" + attr + "' missing in " + context);
   return String(val).trim();
 }
 
 function requireImageSrc(imgElement, context) {
   if (!imgElement) throw new ScriptException("[ManhuaFast] NULL IMG in " + context);
-
   var dataSrc = imgElement.getAttribute("data-src");
   if (dataSrc && dataSrc.trim().length > 0) return dataSrc.trim();
-
   var src = imgElement.getAttribute("src");
   if (src && src.trim().length > 0) return src.trim();
-
-  throw new ScriptException("[ManhuaFast] IMG HAS NO data-src OR src in " + context);
+  throw new ScriptException("[ManhuaFast] IMG HAS NO data-src/src in " + context);
 }
 
 function toPrimaryUrl(url) {
   if (!url) return url;
+  if (typeof url !== "string") return url;
   if (url.indexOf(BASE_URL_FALLBACK) === 0) return url.replace(BASE_URL_FALLBACK, BASE_URL_PRIMARY);
   return url;
 }
 
-// Accept string URL, PlatformID, or content object
 function asUrl(u) {
   if (!u) return "";
   if (typeof u === "string") return u;
   if (typeof u === "object" && typeof u.value === "string") return u.value; // PlatformID
-  if (typeof u === "object" && typeof u.url === "string") return u.url; // content object
+  if (typeof u === "object" && typeof u.url === "string") return u.url;     // content object
   return String(u);
 }
 
-// ============================================================
-// Timestamp parsing
-// ============================================================
+// ===========================
+// Time parsing
+// ===========================
 
 function extract_Timestamp(str) {
   if (!str) return 0;
@@ -239,109 +272,110 @@ function extract_Timestamp(str) {
 
     switch (match[2]) {
       case "second":
-      case "seconds":
-        return now - value;
+      case "seconds": return now - value;
       case "min":
-      case "mins":
-        return now - value * 60;
+      case "mins": return now - value * 60;
       case "hour":
-      case "hours":
-        return now - value * 3600;
+      case "hours": return now - value * 3600;
       case "day":
-      case "days":
-        return now - value * 86400;
+      case "days": return now - value * 86400;
       case "week":
-      case "weeks":
-        return now - value * 604800;
+      case "weeks": return now - value * 604800;
       case "month":
-      case "months":
-        return now - value * 2592000;
+      case "months": return now - value * 2592000;
       case "year":
-      case "years":
-        return now - value * 31536000;
-      default:
-        return 0;
+      case "years": return now - value * 31536000;
     }
   }
 
-  // Fallback: parse date-ish strings if present
   var date = new Date(str);
   if (!isNaN(date.getTime())) return Math.floor(date.getTime() / 1000);
-
   return 0;
 }
 
-// ============================================================
+// ===========================
 // Lifecycle
-// ============================================================
+// ===========================
 
 source.enable = function (conf) {
   source.config = conf;
   config.id = conf && conf.id ? conf.id : config.id;
-  console.log("[ManhuaFast] Plugin enabled");
+
+  log("Plugin enabled");
+  log("PlatformWeb typeof=" + typeof PlatformWeb);
+  log("PlatformWebDetails typeof=" + typeof PlatformWebDetails);
+  log("PlatformID typeof=" + typeof PlatformID);
+  logObj("config", conf);
 };
 
-// ============================================================
-// Home (source home feed)
-// ============================================================
+// ===========================
+// Home
+// ===========================
 
 source.getHome = function (continuationToken) {
-  var homeUrl = BASE_URL_PRIMARY + "/";
-  var response = requestGET(homeUrl);
-  var doc = parseHTML(response.body, homeUrl);
+  log("getHome called continuationToken=" + continuationToken);
+  try {
+    var homeUrl = BASE_URL_PRIMARY + "/";
+    var response = requestGET(homeUrl);
+    var doc = parseHTML(response.body, homeUrl);
 
-  var items = requireElements(doc, ".page-item-detail", "getHome(" + homeUrl + ")");
-  var posts = [];
+    var items = requireElements(doc, ".page-item-detail", "getHome");
+    log("getHome found items=" + items.length);
 
-  items.forEach(function (item, index) {
-    var ctx = "getHome item[" + index + "]";
+    var posts = [];
 
-    var mangaAnchor = requireElement(item, ".post-title a", ctx);
-    var chapterAnchor = requireElement(item, ".chapter-item .chapter a", ctx);
+    items.forEach(function (item, index) {
+      try {
+        var ctx = "getHome item[" + index + "]";
+        var mangaAnchor = requireElement(item, ".post-title a", ctx);
+        var chapterAnchor = requireElement(item, ".chapter-item .chapter a", ctx);
 
-    var mangaTitle = requireText(mangaAnchor, ctx + " .post-title a");
-    var mangaUrl = toPrimaryUrl(requireAttr(mangaAnchor, "href", ctx + " manga href"));
+        var mangaTitle = requireText(mangaAnchor, ctx + " manga");
+        var mangaUrl = toPrimaryUrl(requireAttr(mangaAnchor, "href", ctx + " manga href"));
+        var chapterName = requireText(chapterAnchor, ctx + " chapter");
+        var chapterUrl = toPrimaryUrl(requireAttr(chapterAnchor, "href", ctx + " chapter href"));
 
-    var chapterName = requireText(chapterAnchor, ctx + " chapter text");
-    var chapterUrl = toPrimaryUrl(requireAttr(chapterAnchor, "href", ctx + " chapter href"));
+        var postOnEl = requireElement(item, ".post-on", ctx);
+        var postedTime = extract_Timestamp(requireText(postOnEl, ctx + " post-on"));
 
-    var postOnEl = requireElement(item, ".post-on", ctx);
-    var postedTime = extract_Timestamp(requireText(postOnEl, ctx + " .post-on"));
+        var imgEl = requireElement(item, "img", ctx);
+        var thumbUrl = requireImageSrc(imgEl, ctx + " img");
 
-    var imgEl = requireElement(item, "img", ctx);
-    var thumbUrl = requireImageSrc(imgEl, ctx + " img");
+        var mangaIdParts = mangaUrl.split("/manga/");
+        var authorId = new PlatformID(PLATFORM, mangaIdParts[1], config.id, PLATFORM_CLAIMTYPE);
+        var author = new PlatformAuthorLink(authorId, mangaTitle, mangaUrl, thumbUrl, 0, "");
 
-    var mangaIdParts = mangaUrl.split("/manga/");
-    if (mangaIdParts.length < 2) throw new ScriptException("[ManhuaFast] UNEXPECTED MANGA URL: " + mangaUrl);
+        var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
-    var authorId = new PlatformID(PLATFORM, mangaIdParts[1], config.id, PLATFORM_CLAIMTYPE);
-    var author = new PlatformAuthorLink(authorId, mangaTitle, mangaUrl, thumbUrl, 0, "");
+        var webItem = new PlatformWeb({
+          id: postId,
+          author: author,
+          name: chapterName,
+          datetime: postedTime,
+          url: chapterUrl,
+          thumbnails: new Thumbnails([new Thumbnail(thumbUrl, 0)]),
+        });
 
-    // Stable unique ID = chapter URL
-    var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
+        logContentItem("getHome item[" + index + "]", webItem);
+        posts.push(webItem);
+      } catch (e) {
+        log("getHome item[" + index + "] ERROR: " + (e && e.message ? e.message : e));
+      }
+    });
 
-    posts.push(
-      new PlatformWeb({
-        id: postId,
-        author: author,
-        name: chapterName,
-        datetime: postedTime,
-        url: chapterUrl,
-        thumbnails: new Thumbnails([new Thumbnail(thumbUrl, 0)]),
-      })
-    );
-  });
-
-  return new ContentPager(posts, false, { continuationToken: continuationToken });
+    log("getHome returning count=" + posts.length);
+    return new ContentPager(posts, false, { continuationToken: continuationToken });
+  } catch (e) {
+    log("getHome FATAL: " + (e && e.message ? e.message : e));
+    throw e;
+  }
 };
 
-// ============================================================
-// Search (channels only; content search not implemented)
-// ============================================================
+// ===========================
+// Search (minimal)
+// ===========================
 
-source.searchSuggestions = function (query) {
-  return [];
-};
+source.searchSuggestions = function (query) { return []; };
 
 source.getSearchCapabilities = function () {
   return {
@@ -352,97 +386,106 @@ source.getSearchCapabilities = function () {
 };
 
 source.search = function (query, type, order, filters, continuationToken) {
-  return new ContentPager([], false, {
-    query: query,
-    type: type,
-    order: order,
-    filters: filters,
-    continuationToken: continuationToken,
-  });
+  log("search called query=" + query);
+  return new ContentPager([], false, { query: query, type: type, order: order, filters: filters, continuationToken: continuationToken });
 };
 
-// ============================================================
+// ===========================
 // Channel search
-// ============================================================
+// ===========================
 
 source.searchChannels = function (query, continuationToken) {
-  var searchUrl = BASE_URL_PRIMARY + "/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
-  var response = requestGET(searchUrl);
-  var doc = parseHTML(response.body, searchUrl);
+  log("searchChannels query=" + query);
+  try {
+    var searchUrl = BASE_URL_PRIMARY + "/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
+    var response = requestGET(searchUrl);
+    var doc = parseHTML(response.body, searchUrl);
 
-  var anchors = doc.querySelectorAll(".post-title a");
-  var channels = [];
+    var anchors = doc.querySelectorAll(".post-title a");
+    log("searchChannels found anchors=" + (anchors ? anchors.length : 0));
 
-  if (!anchors || anchors.length === 0) {
-    return new ChannelPager([], false, { query: query, continuationToken: continuationToken });
+    var channels = [];
+    if (!anchors || anchors.length === 0) {
+      return new ChannelPager([], false, { query: query, continuationToken: continuationToken });
+    }
+
+    anchors.forEach(function (a, index) {
+      try {
+        var url = toPrimaryUrl(requireAttr(a, "href", "searchChannels[" + index + "] href"));
+        var name = requireText(a, "searchChannels[" + index + "] text");
+        var parts = url.split("/manga/");
+        var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
+
+        channels.push(new PlatformChannel({
+          id: id,
+          name: name,
+          thumbnail: "",
+          banner: "",
+          subscribers: 0,
+          description: "",
+          url: url,
+          urlAlternatives: [],
+          links: {},
+        }));
+      } catch (e) {
+        log("searchChannels item[" + index + "] ERROR: " + (e && e.message ? e.message : e));
+      }
+    });
+
+    log("searchChannels returning count=" + channels.length);
+    return new ChannelPager(channels, false, { query: query, continuationToken: continuationToken });
+  } catch (e) {
+    log("searchChannels FATAL: " + (e && e.message ? e.message : e));
+    throw e;
   }
-
-  anchors.forEach(function (a, index) {
-    var ctx = "searchChannels[" + index + "]";
-
-    var url = toPrimaryUrl(requireAttr(a, "href", ctx + " href"));
-    var name = requireText(a, ctx + " text");
-
-    var parts = url.split("/manga/");
-    if (parts.length < 2) throw new ScriptException("[ManhuaFast] UNEXPECTED SEARCH RESULT URL: " + url);
-
-    var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
-
-    channels.push(
-      new PlatformChannel({
-        id: id,
-        name: name,
-        thumbnail: "",
-        banner: "",
-        subscribers: 0,
-        description: "",
-        url: url,
-        urlAlternatives: [],
-        links: {},
-      })
-    );
-  });
-
-  return new ChannelPager(channels, false, { query: query, continuationToken: continuationToken });
 };
 
-// ============================================================
-// Channel methods
-// ============================================================
+// ===========================
+// Channel
+// ===========================
 
 source.isChannelUrl = function (url) {
-  return REGEX_CHANNEL_URL.test(asUrl(url));
+  var raw = url;
+  url = asUrl(url);
+  var ok = REGEX_CHANNEL_URL.test(url);
+  log("isChannelUrl raw=" + describeValue(raw) + " -> url=" + url + " match=" + ok);
+  return ok;
 };
 
 source.getChannel = function (url) {
-  url = toPrimaryUrl(asUrl(url));
-  var ctx = "getChannel(" + url + ")";
+  log("getChannel raw=" + describeValue(url));
+  try {
+    url = toPrimaryUrl(asUrl(url));
+    log("getChannel normalized url=" + url);
 
-  var response = requestGET(url);
-  var doc = parseHTML(response.body, url);
+    var response = requestGET(url);
+    var doc = parseHTML(response.body, url);
 
-  var h1 = requireElement(doc, "h1", ctx);
-  var name = requireText(h1, ctx + " h1");
+    var name = requireText(requireElement(doc, "h1", "getChannel"), "getChannel h1");
+    var img = doc.querySelector(".tab-summary img") || doc.querySelector(".summary_image img");
+    var thumb = img ? requireImageSrc(img, "getChannel img") : "";
 
-  var img = doc.querySelector(".tab-summary img") || doc.querySelector(".summary_image img");
-  var thumb = img ? requireImageSrc(img, ctx + " summary img") : "";
+    var parts = url.split("/manga/");
+    var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
 
-  var parts = url.split("/manga/");
-  if (parts.length < 2) throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: " + url);
+    var channel = new PlatformChannel({
+      id: id,
+      name: name,
+      thumbnail: thumb,
+      banner: "",
+      subscribers: 0,
+      description: "",
+      url: url,
+      urlAlternatives: [],
+      links: {},
+    });
 
-  var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
-
-  return new PlatformChannel({
-    id: id,
-    name: name,
-    thumbnail: thumb,
-    banner: "",
-    subscribers: 0,
-    description: "",
-    url: url,
-    urlAlternatives: [],
-    links: {},
-  });
+    log("getChannel return name=" + name + " id=" + id.value);
+    return channel;
+  } catch (e) {
+    log("getChannel FATAL: " + (e && e.message ? e.message : e));
+    throw e;
+  }
 };
 
 source.getChannelCapabilities = function () {
@@ -453,108 +496,132 @@ source.getChannelCapabilities = function () {
   };
 };
 
-// ============================================================
-// Channel contents (chapters) -> PlatformWeb
-// ============================================================
+// ===========================
+// Channel contents (chapters as WEB)
+// ===========================
 
 source.getChannelContents = function (url, type, order, filters, continuationToken) {
-  url = toPrimaryUrl(asUrl(url));
-  var ctx = "getChannelContents(" + url + ")";
+  log("getChannelContents rawUrl=" + describeValue(url) + " type=" + type + " order=" + order);
+  try {
+    url = toPrimaryUrl(asUrl(url));
+    log("getChannelContents normalizedUrl=" + url);
 
-  var getResponse = requestGET(url);
-  var getDoc = parseHTML(getResponse.body, url);
+    var getResponse = requestGET(url);
+    var getDoc = parseHTML(getResponse.body, url);
 
-  var h1 = requireElement(getDoc, "h1", ctx);
-  var mangaTitle = requireText(h1, ctx + " h1");
+    var mangaTitle = requireText(requireElement(getDoc, "h1", "getChannelContents"), "getChannelContents h1");
+    var summaryImg = getDoc.querySelector(".summary_image img") || getDoc.querySelector(".tab-summary img");
+    var mangaThumb = summaryImg ? requireImageSrc(summaryImg, "getChannelContents summary img") : "";
 
-  var summaryImg = getDoc.querySelector(".summary_image img") || getDoc.querySelector(".tab-summary img");
-  var mangaThumb = summaryImg ? requireImageSrc(summaryImg, ctx + " summary img") : "";
+    var parts = url.split("/manga/");
+    var authorId = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
+    var author = new PlatformAuthorLink(authorId, mangaTitle, url, mangaThumb, 0, "");
 
-  var parts = url.split("/manga/");
-  if (parts.length < 2) throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: " + url);
+    var chapterApiUrl = url + (url.endsWith("/") ? "" : "/") + "ajax/chapters/";
+    log("getChannelContents chapterApiUrl=" + chapterApiUrl);
 
-  var authorId = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
-  var author = new PlatformAuthorLink(authorId, mangaTitle, url, mangaThumb, 0, "");
+    var postResponse = requestPOST(chapterApiUrl, "");
+    var postDoc = parseHTML(postResponse.body, chapterApiUrl);
 
-  // Madara chapters endpoint
-  var chapterApiUrl = url + (url.endsWith("/") ? "" : "/") + "ajax/chapters/";
-  var postResponse = requestPOST(chapterApiUrl, "");
-  var postDoc = parseHTML(postResponse.body, chapterApiUrl);
+    var listItems = requireElements(postDoc, "li", "getChannelContents chapters");
+    log("getChannelContents chapter count=" + listItems.length);
 
-  var listItems = requireElements(postDoc, "li", ctx + " chapters");
-  var posts = [];
+    var posts = [];
 
-  listItems.forEach(function (li, index) {
-    var itemCtx = ctx + " chapter[" + index + "]";
+    listItems.forEach(function (li, index) {
+      try {
+        var a = requireElement(li, "a", "chapter[" + index + "]");
+        var chapterName = requireText(a, "chapter[" + index + "] text");
+        var chapterLink = toPrimaryUrl(requireAttr(a, "href", "chapter[" + index + "] href"));
 
-    var a = requireElement(li, "a", itemCtx);
-    var chapterName = requireText(a, itemCtx + " a text");
-    var chapterLink = toPrimaryUrl(requireAttr(a, "href", itemCtx + " a href"));
+        var iEl = li.querySelector("i");
+        var postedTime = iEl ? extract_Timestamp(requireText(iEl, "chapter[" + index + "] date")) : 0;
 
-    var iEl = li.querySelector("i");
-    var postedTime = iEl ? extract_Timestamp(requireText(iEl, itemCtx + " i")) : 0;
+        var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
-    var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
+        var webItem = new PlatformWeb({
+          id: postId,
+          author: author,
+          name: chapterName,
+          datetime: postedTime,
+          url: chapterLink,
+          thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
+        });
 
-    posts.push(
-      new PlatformWeb({
-        id: postId,
-        author: author,
-        name: chapterName,
-        datetime: postedTime,
-        url: chapterLink,
-        thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
-      })
-    );
-  });
+        logContentItem("getChannelContents item[" + index + "]", webItem);
+        posts.push(webItem);
+      } catch (e) {
+        log("getChannelContents item[" + index + "] ERROR: " + (e && e.message ? e.message : e));
+      }
+    });
 
-  if (order === ORDER_OLDEST) posts.reverse();
+    if (order === ORDER_OLDEST) {
+      log("getChannelContents reversing order for oldest");
+      posts.reverse();
+    }
 
-  return new ContentPager(posts, false, {
-    continuationToken: continuationToken,
-    order: order,
-  });
+    log("getChannelContents returning count=" + posts.length);
+    return new ContentPager(posts, false, { continuationToken: continuationToken, order: order });
+  } catch (e) {
+    log("getChannelContents FATAL: " + (e && e.message ? e.message : e));
+    throw e;
+  }
 };
 
-// ============================================================
-// Content details -> PlatformWebDetails (URL-based, no html override)
-// ============================================================
+// ===========================
+// Content details (WEB -> WebDetailFragment)
+// ===========================
 
 source.isContentDetailsUrl = function (url) {
-  return REGEX_CHAPTER_URL.test(asUrl(url));
+  var raw = url;
+  var normalized = asUrl(url);
+  var ok = REGEX_CHAPTER_URL.test(normalized);
+  log("isContentDetailsUrl raw=" + describeValue(raw) + " normalized=" + normalized + " match=" + ok);
+  return ok;
 };
 
 source.getContentDetails = function (url) {
-  // Grayjay may pass a string URL or a PlatformID
-  url = toPrimaryUrl(asUrl(url));
-
-  // Optional fetch for title only (and to fail early with a clearer error if chapter is unreachable)
-  var response = requestGET(url);
-
-  var title = url;
+  log("getContentDetails called raw=" + describeValue(url));
   try {
-    var doc = parseHTML(response.body, url);
-    var h1 = doc.querySelector("h1");
-    if (h1) title = (h1.textContent || "").trim() || title;
+    var normalized = toPrimaryUrl(asUrl(url));
+    log("getContentDetails normalized=" + normalized);
+
+    // Fetch once for diagnostics + title (optional, but helpful)
+    var response = requestGET(normalized);
+    log("getContentDetails GET success code=" + (response ? response.code : "null"));
+
+    var title = normalized;
+    try {
+      var doc = parseHTML(response.body, normalized);
+      var h1 = doc.querySelector("h1");
+      if (h1) title = (h1.textContent || "").trim() || title;
+      log("getContentDetails title=" + title);
+    } catch (inner) {
+      log("getContentDetails title parse failed: " + (inner && inner.message ? inner.message : inner));
+    }
+
+    var id = new PlatformID(PLATFORM, normalized, config.id, PLATFORM_CLAIMTYPE);
+
+    var details = new PlatformWebDetails({
+      id: id,
+      name: title,
+      url: normalized
+      // no html -> Grayjay should loadUrl(url)
+    });
+
+    log("getContentDetails return plugin_type=" + details.plugin_type + " contentType=" + details.contentType + " id=" + id.value + " url=" + normalized);
+    return details;
   } catch (e) {
-    // keep URL fallback title
+    log("getContentDetails FATAL: " + (e && e.message ? e.message : e));
+    throw e;
   }
-
-  var id = new PlatformID(PLATFORM, url, config.id, PLATFORM_CLAIMTYPE);
-
-  // IMPORTANT: Do NOT set html if you want Grayjay to load the URL itself in the in-app browser
-  return new PlatformWebDetails({
-    id: id,
-    name: title,
-    url: url,
-  });
 };
 
-// ============================================================
-// Comments (not supported)
-// ============================================================
+// ===========================
+// Comments
+// ===========================
 
 source.getComments = function (url, continuationToken) {
+  log("getComments called url=" + asUrl(url));
   return [];
 };
-

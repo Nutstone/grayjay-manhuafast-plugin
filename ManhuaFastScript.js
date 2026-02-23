@@ -337,18 +337,15 @@ source.getHome = function (continuationToken) {
     var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
     posts.push(
-      new PlatformPost({
+      new PlatformWeb({
         id: postId,
         author: author,
         name: chapterName,
         datetime: postedTime,
-        url: chapterUrl,
-        description: "",
-        thumbnails: new Thumbnails([new Thumbnail(thumbUrl, 0)]),
-        images: [],
+        url: chapterLink,
+        thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
       })
     );
-  });
 
   return new ContentPager(posts, false, { continuationToken: continuationToken });
 };
@@ -574,3 +571,4 @@ source.getContentDetails = function (url) {
 source.getComments = function (url, continuationToken) {
   return [];
 };
+

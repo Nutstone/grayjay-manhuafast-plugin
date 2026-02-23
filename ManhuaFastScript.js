@@ -1,7 +1,8 @@
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 const REGEX_HUMAN_AGO = new RegExp("([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago");
-const REGEX_CHANNEL_URL = new RegExp("^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/$");
+// Trailing slash is optional so URLs without it still match (I)
+const REGEX_CHANNEL_URL = new RegExp("^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/?$");
 
 const BASE_URL_PRIMARY = "https://manhuafast.com";
 const BASE_URL_FALLBACK = "https://manhuafast.net";
@@ -213,14 +214,29 @@ function extract_Timestamp(str) {
 }
 
 // ============================================================
-// URL normalization helper — ensures all internal URLs use the primary domain
+// URL normalization helpers
 // ============================================================
+
+// Rewrite fallback-domain URLs to primary domain
 function toPrimaryUrl(url) {
     if (!url) return url;
     if (url.indexOf(BASE_URL_FALLBACK) === 0) {
         return url.replace(BASE_URL_FALLBACK, BASE_URL_PRIMARY);
     }
     return url;
+}
+
+// Ensure a manga channel URL has a trailing slash (I)
+// so that appending "ajax/chapters/" always works correctly
+function ensureTrailingSlash(url) {
+    if (!url) return url;
+    return url[url.length - 1] === '/' ? url : url + '/';
+}
+
+// Strip trailing slash from a path segment used as an ID
+function stripTrailingSlash(str) {
+    if (!str) return str;
+    return str[str.length - 1] === '/' ? str.slice(0, -1) : str;
 }
 
 // ============================================================
@@ -255,7 +271,7 @@ source.getHome = function(continuationToken) {
         if (mangaIdParts.length < 2) {
             throw new ScriptException("[ManhuaFast] UNEXPECTED URL FORMAT: '" + mangaLink + "' in " + ctx);
         }
-        var mangaId = mangaIdParts[1];
+        var mangaId = stripTrailingSlash(mangaIdParts[1]);
 
         var mangaChapter = requireText(mangaChapterAnchor, ctx + " chapter anchor");
         var mangaChapterLink = toPrimaryUrl(requireAttr(mangaChapterAnchor, "href", ctx + " chapter anchor[href]"));
@@ -293,51 +309,148 @@ source.getHome = function(continuationToken) {
 // ============================================================
 source.searchSuggestions = function(query) { return []; }
 
+// Updated sort labels to match what search() actually passes to the API (F)
 source.getSearchCapabilities = function() {
     return {
         types: [Type.Feed.Mixed],
-        sorts: [Type.Order.Chronological, "^release_time"],
+        sorts: ["Latest", "A-Z", "Rating", "Most Viewed"],
         filters: []
     };
 }
 
-source.search = function(query, type, order, filters, continuationToken) { return []; }
+// Implemented: searches manga by title, supports sort and pagination (F, G)
+source.search = function(query, type, order, filters, continuationToken) {
+    var page = (continuationToken && typeof continuationToken.page === "number") ? continuationToken.page : 1;
 
-// ============================================================
-// searchChannels
-// ============================================================
-source.searchChannels = function(query, continuationToken) {
-    var searchUrl = BASE_URL_PRIMARY + "/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
+    // Map sort label to Madara's m_orderby parameter
+    var sortParam = "";
+    if (order === "A-Z")          sortParam = "&m_orderby=alphabet";
+    else if (order === "Rating")  sortParam = "&m_orderby=rating";
+    else if (order === "Most Viewed") sortParam = "&m_orderby=views";
+    // "Latest" (default) needs no extra param
+
+    var searchUrl = BASE_URL_PRIMARY +
+        (page > 1 ? "/page/" + page + "/" : "/") +
+        "?s=" + encodeURIComponent(query) + "&post_type=wp-manga" + sortParam;
+
     var response = requestGET(searchUrl);
     var doc = parseHTML(response.body, searchUrl);
 
-    var anchors = doc.querySelectorAll(".post-title a");
-    var channels = [];
+    var results = [];
 
-    if (!anchors || anchors.length === 0) {
-        console.log("[ManhuaFast] Search returned 0 results for: " + query);
-        return new ChannelPager([], false, { query: query, continuationToken: continuationToken });
+    // Try container-based selection to get both title and thumbnail
+    var items = doc.querySelectorAll(".c-tabs-item__content");
+    if (!items || items.length === 0) {
+        items = doc.querySelectorAll(".page-item-detail");
     }
 
-    anchors.forEach(function(item, index) {
-        var ctx = "searchChannels[" + index + "] query='" + query + "'";
-        var href = toPrimaryUrl(requireAttr(item, "href", ctx + " a[href]"));
-        var hrefParts = href.split('/manga/');
-        if (hrefParts.length < 2) {
-            throw new ScriptException("[ManhuaFast] UNEXPECTED SEARCH URL: '" + href + "' in " + ctx);
+    if (items && items.length > 0) {
+        items.forEach(function(item, index) {
+            var anchor = item.querySelector(".post-title a");
+            if (!anchor) return;
+
+            var href = toPrimaryUrl(anchor.getAttribute("href") || "");
+            var hrefParts = href.split('/manga/');
+            if (hrefParts.length < 2) return;
+
+            var mangaSlug = stripTrailingSlash(hrefParts[1]);
+            var id = new PlatformID(PLATFORM, mangaSlug, config.id, PLATFORM_CLAIMTYPE);
+            var name = anchor.textContent.trim();
+
+            var img = item.querySelector("img");
+            var thumbnail = img ? optionalImageSrc(img) : "";
+            var author = new PlatformAuthorLink(id, name, href, thumbnail, 0, "");
+
+            results.push(new PlatformNestedMediaContent({
+                id: id,
+                author: author,
+                name: name,
+                datetime: 0,
+                url: href,
+                thumbnails: thumbnail ? [new Thumbnails([new Thumbnail(thumbnail, 400)])] : [],
+                description: "",
+                images: [],
+                contentUrl: href,
+                contentName: name,
+                contentDescription: ""
+            }));
+        });
+    }
+
+    var hasNextPage = !!doc.querySelector("a.next.page-numbers");
+    return new ContentPager(results, hasNextPage, { page: page + 1 });
+}
+
+// ============================================================
+// searchChannels — with cover thumbnail extraction and pagination (A, G)
+// ============================================================
+source.searchChannels = function(query, continuationToken) {
+    var page = (continuationToken && typeof continuationToken.page === "number") ? continuationToken.page : 1;
+
+    var searchUrl = BASE_URL_PRIMARY +
+        (page > 1 ? "/page/" + page + "/" : "/") +
+        "?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
+
+    var response = requestGET(searchUrl);
+    var doc = parseHTML(response.body, searchUrl);
+
+    var channels = [];
+
+    // Container-based selection: picks up both .post-title a (link) and img (thumbnail)
+    var items = doc.querySelectorAll(".c-tabs-item__content");
+    if (!items || items.length === 0) {
+        items = doc.querySelectorAll(".page-item-detail");
+    }
+
+    if (items && items.length > 0) {
+        items.forEach(function(item, index) {
+            var ctx = "searchChannels[" + index + "] query='" + query + "'";
+            var anchor = item.querySelector(".post-title a");
+            if (!anchor) return;
+
+            var href = toPrimaryUrl(anchor.getAttribute("href") || "");
+            var hrefParts = href.split('/manga/');
+            if (hrefParts.length < 2) return;
+
+            var img = item.querySelector("img");
+            var thumbnail = img ? optionalImageSrc(img) : "";
+
+            var mangaId = new PlatformID(PLATFORM, stripTrailingSlash(hrefParts[1]), config.id, PLATFORM_CLAIMTYPE);
+            var mangaName = anchor.textContent.trim();
+
+            channels.push(new PlatformChannel({
+                id: mangaId, name: mangaName, thumbnail: thumbnail, banner: "",
+                subscribers: 0, description: "", url: href,
+                urlAlternatives: [], links: {}
+            }));
+        });
+    } else {
+        // Fallback: anchor-only selection (no thumbnail available)
+        var anchors = doc.querySelectorAll(".post-title a");
+        if (anchors && anchors.length > 0) {
+            anchors.forEach(function(item, index) {
+                var href = toPrimaryUrl(item.getAttribute("href") || "");
+                var hrefParts = href.split('/manga/');
+                if (hrefParts.length < 2) return;
+
+                var mangaId = new PlatformID(PLATFORM, stripTrailingSlash(hrefParts[1]), config.id, PLATFORM_CLAIMTYPE);
+                var mangaName = item.textContent.trim();
+
+                channels.push(new PlatformChannel({
+                    id: mangaId, name: mangaName, thumbnail: "", banner: "",
+                    subscribers: 0, description: "", url: href,
+                    urlAlternatives: [], links: {}
+                }));
+            });
         }
+    }
 
-        var mangaId = new PlatformID(PLATFORM, hrefParts[1], config.id, PLATFORM_CLAIMTYPE);
-        var mangaName = requireText(item, ctx + " a text");
+    if (channels.length === 0) {
+        console.log("[ManhuaFast] Search returned 0 results for: " + query);
+    }
 
-        channels.push(new PlatformChannel({
-            id: mangaId, name: mangaName, thumbnail: "", banner: "",
-            subscribers: 0, description: "", url: href,
-            urlAlternatives: [], links: {}
-        }));
-    });
-
-    return new ChannelPager(channels, false, { query: query, continuationToken: continuationToken });
+    var hasNextPage = !!doc.querySelector("a.next.page-numbers");
+    return new ChannelPager(channels, hasNextPage, { query: query, page: page + 1 });
 }
 
 // ============================================================
@@ -345,8 +458,9 @@ source.searchChannels = function(query, continuationToken) {
 // ============================================================
 source.isChannelUrl = function(url) { return REGEX_CHANNEL_URL.test(url); }
 
+// Includes manga synopsis extraction (C)
 source.getChannel = function(url) {
-    url = toPrimaryUrl(url);
+    url = ensureTrailingSlash(toPrimaryUrl(url)); // (I)
     var ctx = "getChannel(" + url + ")";
     var response = requestGET(url);
     var doc = parseHTML(response.body, url);
@@ -356,29 +470,49 @@ source.getChannel = function(url) {
     var summaryImg = requireElement(doc, ".tab-summary img", ctx);
     var channelThumbnail = requireImageSrc(summaryImg, ctx + " .tab-summary img");
 
+    // Extract synopsis — Madara theme uses several possible selectors (C)
+    var description = "";
+    var descEls = doc.querySelectorAll(".description-summary p, .summary__content p, .summary-content p");
+    if (descEls && descEls.length > 0) {
+        var parts = [];
+        descEls.forEach(function(p) {
+            var text = p.textContent.trim();
+            if (text) parts.push(text);
+        });
+        description = parts.join("\n");
+    }
+
     var mangaIdParts = url.split('/manga/');
     if (mangaIdParts.length < 2) {
         throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: '" + url + "'");
     }
-    var id = new PlatformID(PLATFORM, mangaIdParts[1], config.id, PLATFORM_CLAIMTYPE);
+    var id = new PlatformID(PLATFORM, stripTrailingSlash(mangaIdParts[1]), config.id, PLATFORM_CLAIMTYPE);
 
     return new PlatformChannel({
         id: id, name: name, thumbnail: channelThumbnail, banner: "",
-        subscribers: 0, description: "", url: url,
+        subscribers: 0, description: description, url: url,
         urlAlternatives: [], links: {}
     });
 }
 
+// Fixed sort labels: user-friendly strings instead of "CHRONOLOGICAL" (1)
 source.getChannelCapabilities = function() {
-    return { types: [Type.Feed.Mixed], sorts: [Type.Order.Chronological, "Oldest first"] };
+    return {
+        types: [Type.Feed.Mixed],
+        sorts: ["Newest First", "Oldest First"],
+        filters: []
+    };
 }
 
 // ============================================================
-// getChannelContents
+// getChannelContents — fixed sort comparison, added pagination (2, H, I)
 // ============================================================
 source.getChannelContents = function(url, type, order, filters, continuationToken) {
-    url = toPrimaryUrl(url);
+    url = ensureTrailingSlash(toPrimaryUrl(url)); // (I)
     var ctx = "getChannelContents(" + url + ")";
+
+    var PAGE_SIZE = 100;
+    var offset = (continuationToken && typeof continuationToken.offset === "number") ? continuationToken.offset : 0;
 
     var getResponse = requestGET(url);
     var getDoc = parseHTML(getResponse.body, url);
@@ -387,7 +521,7 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
     if (mangaIdParts.length < 2) {
         throw new ScriptException("[ManhuaFast] UNEXPECTED CHANNEL URL: no '/manga/' in " + url);
     }
-    var mangaId = mangaIdParts[1];
+    var mangaId = stripTrailingSlash(mangaIdParts[1]);
 
     var h1 = requireElement(getDoc, "h1", ctx);
     var mangaTitle = requireText(h1, ctx + " h1");
@@ -402,7 +536,7 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
     var postDoc = parseHTML(postResponse.body, chapterUrl);
 
     var listItems = requireElements(postDoc, "li", ctx + " chapters POST");
-    var chapters = [];
+    var allChapters = [];
 
     listItems.forEach(function(item, index) {
         var itemCtx = ctx + " chapter[" + index + "]";
@@ -413,7 +547,7 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
         var mangaPostedTime = extract_Timestamp(requireText(iEl, itemCtx + " i"));
         var chapterId = new PlatformID(PLATFORM, mangaChapter, config.id, PLATFORM_CLAIMTYPE);
 
-        chapters.push(new PlatformNestedMediaContent({
+        allChapters.push(new PlatformNestedMediaContent({
             id: chapterId, author: author, name: mangaChapter,
             datetime: mangaPostedTime, thumbnails: [], description: "",
             url: mangaChapterLink, images: [],
@@ -422,23 +556,23 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
         }));
     });
 
-    // Sort chapters based on the order parameter
-    if (order === "Oldest first") {
-        chapters.reverse();
+    // Apply sort: ManhuaFast returns newest-first by default (2)
+    if (order === "Oldest First") {
+        allChapters.reverse();
     }
 
-    return new ContentPager(chapters, false, { continuationToken: continuationToken });
-}
+    // Client-side pagination of the full chapter list (H)
+    var pageItems = allChapters.slice(offset, offset + PAGE_SIZE);
+    var hasMore = (offset + PAGE_SIZE) < allChapters.length;
 
-// ============================================================
-// Channel contents sorting helper
-// ============================================================
-// Note: ManhuaFast returns chapters newest-first by default from its ajax endpoint.
-// When "Oldest first" is selected, we simply reverse the array.
+    return new ContentPager(pageItems, hasMore, { offset: offset + PAGE_SIZE });
+}
 
 source.isContentDetailsUrl = function(url) { return false; }
 // Always false so the URL is opened in web view instead of app plugin view
 
+// Chapter images scoped to the reader container first,
+// falling back progressively to avoid capturing UI images (D)
 source.getContentDetails = function(url) {
     url = toPrimaryUrl(url);
     var ctx = "getContentDetails(" + url + ")";
@@ -450,14 +584,23 @@ source.getContentDetails = function(url) {
     if (mangaIdParts.length < 2) {
         throw new ScriptException("[ManhuaFast] UNEXPECTED CONTENT URL: no '/manga/' in " + url);
     }
-    var mangaId = mangaIdParts[1];
+    var mangaId = stripTrailingSlash(mangaIdParts[1]);
 
-    var images = [];
-    var thumbnailsArray = [];
-    var imgElements = doc.querySelectorAll("img");
+    // Prefer chapter-reader container; fall back to entry content then all images (D)
+    var imgElements = doc.querySelectorAll(".reading-content img");
+    if (!imgElements || imgElements.length === 0) {
+        imgElements = doc.querySelectorAll(".entry-content img");
+    }
+    if (!imgElements || imgElements.length === 0) {
+        imgElements = doc.querySelectorAll("img");
+    }
+
     if (!imgElements || imgElements.length === 0) {
         throw new ScriptException("[ManhuaFast] NO IMG ELEMENTS FOUND in " + ctx);
     }
+
+    var images = [];
+    var thumbnailsArray = [];
 
     imgElements.forEach(function(item) {
         var imgSrc = optionalImageSrc(item);

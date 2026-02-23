@@ -4,7 +4,9 @@
 // Workaround behavior:
 // - Chapters are emitted as PlatformPost (not PlatformWeb)
 // - Clicking a chapter opens PostDetailFragment
-// - Post details contain a clickable link (HTML) that opens the in-app browser
+// - Post details contain a clickable link (HTML)
+// - Link is marked with ?gj_external=1 so Grayjay treats it as external browser URL
+//   instead of re-routing it as plugin content (which caused "Expected media content, found POST")
 
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
@@ -251,6 +253,39 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+// Remove our "open externally in browser" marker so plugin fetching/regex keeps working.
+function stripExternalMarker(url) {
+  if (!url) return url;
+  var s = String(url);
+
+  // Remove gj_external=1 from query string
+  s = s.replace(/([?&])gj_external=1(?=(&|#|$))/gi, function (m, sep) {
+    return sep === "?" ? "?" : "";
+  });
+
+  // Clean up malformed leftovers
+  s = s.replace(/\?&/, "?");
+  s = s.replace(/[?&]#/, "#");
+  s = s.replace(/[?&]$/, "");
+  s = s.replace(/\?$/, "");
+
+  return s;
+}
+
+function makeExternalBrowserUrl(url) {
+  if (!url) return "";
+  url = String(url);
+  if (url.indexOf("gj_external=1") >= 0) return url;
+  if (url.indexOf("#") >= 0) {
+    // insert before hash
+    var idx = url.indexOf("#");
+    var base = url.substring(0, idx);
+    var hash = url.substring(idx);
+    return (base.indexOf("?") >= 0 ? base + "&gj_external=1" : base + "?gj_external=1") + hash;
+  }
+  return (url.indexOf("?") >= 0) ? (url + "&gj_external=1") : (url + "?gj_external=1");
+}
+
 // ===========================
 // Time parsing
 // ===========================
@@ -343,13 +378,14 @@ source.getHome = function (continuationToken) {
 
         var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
+        // IMPORTANT: url is intentionally empty so Grayjay doesn't route post-click as content URL.
         var postItem = new PlatformPost({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterUrl,
-          description: "WEB: " + chapterUrl
+          url: "",
+          description: "Open chapter"
         });
 
         logContentItem("getHome item[" + index + "]", postItem);
@@ -535,13 +571,14 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
+        // IMPORTANT: url is intentionally empty so Grayjay doesn't route post-click as content URL.
         var postItem = new PlatformPost({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterLink,
-          description: "WEB: " + chapterLink
+          url: "",
+          description: "Open chapter"
         });
 
         logContentItem("getChannelContents item[" + index + "]", postItem);
@@ -571,8 +608,16 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 source.isContentDetailsUrl = function (url) {
   var raw = url;
   url = toPrimaryUrl(asUrl(url));
-  var ok = REGEX_CHAPTER_URL.test(url);
-  log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + url + " match=" + ok);
+
+  // If this marker exists, force browser handling (do NOT claim as plugin content).
+  if (url.indexOf("gj_external=1") >= 0) {
+    log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + url + " match=false (external marker)");
+    return false;
+  }
+
+  var normalized = stripExternalMarker(url);
+  var ok = REGEX_CHAPTER_URL.test(normalized);
+  log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + normalized + " match=" + ok);
   return ok;
 };
 
@@ -584,6 +629,7 @@ source.getContentDetails = function (url) {
   log("getContentDetails raw=" + describeValue(url));
   try {
     url = toPrimaryUrl(asUrl(url));
+    url = stripExternalMarker(url);
     log("getContentDetails normalized url=" + url);
 
     if (!REGEX_CHAPTER_URL.test(url)) {
@@ -656,16 +702,15 @@ source.getContentDetails = function (url) {
     var postId = new PlatformID(PLATFORM, url, config.id, PLATFORM_CLAIMTYPE);
 
     var safeTitle = escapeHtml(title);
-    var safeUrl = escapeHtml(url);
+    var browserUrl = makeExternalBrowserUrl(url); // marker ensures browser routing
+    var safeBrowserUrl = escapeHtml(browserUrl);
 
-    // HTML post body so the URL is definitely clickable in PostDetailFragment.
-    // (This opens via the app's URL click handling / BrowserFragment path.)
+    // HTML post body with clickable link.
     var htmlBody =
       '<div style="padding:12px;">' +
       '<p><b>' + safeTitle + '</b></p>' +
       '<p>Open chapter in browser:</p>' +
-      '<p><a href="' + safeUrl + '">' + safeUrl + '</a></p>' +
-      '<p><a href="https://www.google.com">https://www.google.com</a></p>' +
+      '<p><a href="' + safeBrowserUrl + '">Read chapter</a></p>' +
       '</div>';
 
     var details = new PlatformPostDetails({
@@ -673,7 +718,8 @@ source.getContentDetails = function (url) {
       author: author,
       name: title,
       datetime: 0,
-      description: "WEB: " + url,
+      url: "",                  // IMPORTANT: do not expose plugin chapter URL here
+      description: "Open chapter",
       content: htmlBody,
       textType: Type.Text.HTML
     });
@@ -685,6 +731,3 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
-
-
-

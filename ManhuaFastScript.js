@@ -665,7 +665,7 @@ source.getContentDetails = function (url) {
       '<p><b>' + safeTitle + '</b></p>' +
       '<p>Open chapter in browser:</p>' +
       '<p><a href="' + safeUrl + '">' + safeUrl + '</a></p>' +
-      '<p><a href="www.google.com">google</a></p>' +
+      '<p><a href="https://www.google.com">https://www.google.com</a></p>' +
       '</div>';
 
     var details = new PlatformPostDetails({
@@ -685,5 +685,6 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+
 
 

@@ -1,5 +1,10 @@
-// ManhuaFast Grayjay Plugin (WEB chapters -> WebDetailFragment / in-app browser)
+// ManhuaFast Grayjay Plugin (Chapter entries as POST workaround for ChannelFragment JSWeb click bug)
 // Logging-heavy debug build
+//
+// Workaround behavior:
+// - Chapters are emitted as PlatformPost (not PlatformWeb)
+// - Clicking a chapter opens PostDetailFragment
+// - Post details contain a clickable link (HTML) that opens the in-app browser
 
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
@@ -26,7 +31,6 @@ const DEFAULT_HEADERS = {
 const ORDER_OLDEST = "oldest";
 
 const config = { id: undefined };
-
 
 function describeValue(v) {
   try {
@@ -237,6 +241,16 @@ function asUrl(u) {
   return String(u);
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ===========================
 // Time parsing
 // ===========================
@@ -283,13 +297,15 @@ source.enable = function (conf) {
   config.id = conf && conf.id ? conf.id : config.id;
 
   log("Plugin enabled");
+  log("PlatformPost typeof=" + typeof PlatformPost);
+  log("PlatformPostDetails typeof=" + typeof PlatformPostDetails);
   log("PlatformWeb typeof=" + typeof PlatformWeb);
   log("PlatformWebDetails typeof=" + typeof PlatformWebDetails);
   log("PlatformID typeof=" + typeof PlatformID);
 };
 
 // ===========================
-// Home
+// Home (chapters emitted as POST)
 // ===========================
 
 source.getHome = function (continuationToken) {
@@ -327,16 +343,17 @@ source.getHome = function (continuationToken) {
 
         var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWeb({
+        var postItem = new PlatformPost({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterUrl
+          url: chapterUrl,
+          description: "WEB: " + chapterUrl
         });
 
-        logContentItem("getHome item[" + index + "]", webItem);
-        posts.push(webItem);
+        logContentItem("getHome item[" + index + "]", postItem);
+        posts.push(postItem);
       } catch (e) {
         log("getHome item[" + index + "] ERROR: " + (e && e.message ? e.message : e));
       }
@@ -476,7 +493,7 @@ source.getChannelCapabilities = function () {
 };
 
 // ===========================
-// Channel contents (chapters as WEB)
+// Channel contents (chapters as POST workaround)
 // ===========================
 
 source.getChannelContents = function (url, type, order, filters, continuationToken) {
@@ -518,15 +535,17 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWeb({
+        var postItem = new PlatformPost({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterLink });
+          url: chapterLink,
+          description: "WEB: " + chapterLink
+        });
 
-        logContentItem("getChannelContents item[" + index + "]", webItem);
-        posts.push(webItem);
+        logContentItem("getChannelContents item[" + index + "]", postItem);
+        posts.push(postItem);
       } catch (e) {
         log("getChannelContents item[" + index + "] ERROR: " + (e && e.message ? e.message : e));
       }
@@ -545,3 +564,124 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
   }
 };
 
+// ===========================
+// Content details URL classification (for chapter posts)
+// ===========================
+
+source.isContentDetailsUrl = function (url) {
+  var raw = url;
+  url = toPrimaryUrl(asUrl(url));
+  var ok = REGEX_CHAPTER_URL.test(url);
+  log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + url + " match=" + ok);
+  return ok;
+};
+
+// ===========================
+// Content details (return POST DETAILS with clickable URL HTML)
+// ===========================
+
+source.getContentDetails = function (url) {
+  log("getContentDetails raw=" + describeValue(url));
+  try {
+    url = toPrimaryUrl(asUrl(url));
+    log("getContentDetails normalized url=" + url);
+
+    if (!REGEX_CHAPTER_URL.test(url)) {
+      throw new ScriptException("[ManhuaFast] getContentDetails called with non-chapter URL: " + url);
+    }
+
+    // Fetch page mostly to extract a nicer title and author metadata if available.
+    var response = requestGET(url);
+    var doc = parseHTML(response.body, url);
+
+    var title = "";
+    try {
+      title = requireText(requireElement(doc, "h1", "getContentDetails h1"), "getContentDetails h1");
+    } catch (e1) {
+      try {
+        title = requireText(requireElement(doc, ".post-title h1", "getContentDetails fallback title"), "getContentDetails fallback title");
+      } catch (e2) {
+        title = url.split("/").filter(function (x) { return x; }).pop() || "Chapter";
+      }
+    }
+
+    // Try to infer manga (author/channel) URL/title
+    var mangaUrl = "";
+    var mangaTitle = "";
+    try {
+      var breadcrumbLinks = doc.querySelectorAll(".breadcrumb a");
+      if (breadcrumbLinks && breadcrumbLinks.length > 0) {
+        for (var i = breadcrumbLinks.length - 1; i >= 0; i--) {
+          var bUrl = toPrimaryUrl(requireAttr(breadcrumbLinks[i], "href", "breadcrumb[" + i + "]"));
+          if (REGEX_CHANNEL_URL.test(bUrl)) {
+            mangaUrl = bUrl;
+            mangaTitle = requireText(breadcrumbLinks[i], "breadcrumb[" + i + "] text");
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      log("getContentDetails breadcrumb parse warning: " + (e && e.message ? e.message : e));
+    }
+
+    if (!mangaUrl) {
+      var m = url.match(/^(https:\/\/manhuafast\.(?:com|net)\/manga\/[^\/]+)\//);
+      if (m) mangaUrl = toPrimaryUrl(m[1]);
+    }
+    if (!mangaTitle) {
+      try {
+        mangaTitle = requireText(requireElement(doc, ".breadcrumb", "getContentDetails breadcrumb fallback"), "getContentDetails breadcrumb fallback");
+      } catch (e) {
+        mangaTitle = "ManhuaFast";
+      }
+    }
+
+    var thumb = "";
+    try {
+      var ogImage = doc.querySelector('meta[property="og:image"]');
+      if (ogImage) thumb = requireAttr(ogImage, "content", "og:image");
+    } catch (e) {}
+
+    var author = undefined;
+    if (mangaUrl) {
+      try {
+        var mangaIdParts = mangaUrl.split("/manga/");
+        var authorId = new PlatformID(PLATFORM, mangaIdParts[1], config.id, PLATFORM_CLAIMTYPE);
+        author = new PlatformAuthorLink(authorId, mangaTitle, mangaUrl, thumb, 0, "");
+      } catch (e) {
+        log("getContentDetails author build warning: " + (e && e.message ? e.message : e));
+      }
+    }
+
+    var postId = new PlatformID(PLATFORM, url, config.id, PLATFORM_CLAIMTYPE);
+
+    var safeTitle = escapeHtml(title);
+    var safeUrl = escapeHtml(url);
+
+    // HTML post body so the URL is definitely clickable in PostDetailFragment.
+    // (This opens via the app's URL click handling / BrowserFragment path.)
+    var htmlBody =
+      '<div style="padding:12px;">' +
+      '<p><b>' + safeTitle + '</b></p>' +
+      '<p>Open chapter in browser:</p>' +
+      '<p><a href="' + safeUrl + '">' + safeUrl + '</a></p>' +
+      '</div>';
+
+    var details = new PlatformPostDetails({
+      id: postId,
+      author: author,
+      name: title,
+      datetime: 0,
+      url: url,
+      description: "WEB: " + url,
+      content: htmlBody,
+      textType: Type.Text.HTML
+    });
+
+    logContentItem("getContentDetails return", details);
+    return details;
+  } catch (e) {
+    log("getContentDetails FATAL: " + (e && e.message ? e.message : e));
+    throw e;
+  }
+};

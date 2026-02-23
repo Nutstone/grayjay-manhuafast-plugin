@@ -524,9 +524,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: chapterLink,
-          thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
-        });
+          url: chapterLink });
 
         logContentItem("getChannelContents item[" + index + "]", webItem);
         posts.push(webItem);
@@ -547,62 +545,3 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
     throw e;
   }
 };
-
-// ===========================
-// Content details (WEB -> WebDetailFragment)
-// ===========================
-
-source.isContentDetailsUrl = function (url) {
-  return true;
-};
-
-source.getContentDetails = function (url) {
-  log("getContentDetails called raw=" + describeValue(url));
-  try {
-    var normalized = toPrimaryUrl(asUrl(url));
-    log("getContentDetails normalized=" + normalized);
-
-    // Fetch once for diagnostics + title (optional, but helpful)
-    var response = requestGET(normalized);
-    log("getContentDetails GET success code=" + (response ? response.code : "null"));
-
-    var title = normalized;
-    try {
-      var doc = parseHTML(response.body, normalized);
-      var h1 = doc.querySelector("h1");
-      if (h1) title = (h1.textContent || "").trim() || title;
-      log("getContentDetails title=" + title);
-    } catch (inner) {
-      log("getContentDetails title parse failed: " + (inner && inner.message ? inner.message : inner));
-    }
-
-    var id = new PlatformID(PLATFORM, normalized, config.id, PLATFORM_CLAIMTYPE);
-
-    var details = new PlatformWebDetails({
-      id: id,
-      name: title,
-      url: normalized
-      // no html -> Grayjay should loadUrl(url)
-    });
-
-    log("getContentDetails return plugin_type=" + details.plugin_type + " contentType=" + details.contentType + " id=" + id.value + " url=" + normalized);
-    return details;
-  } catch (e) {
-    log("getContentDetails FATAL: " + (e && e.message ? e.message : e));
-    throw e;
-  }
-};
-
-// ===========================
-// Comments
-// ===========================
-
-source.getComments = function (url, continuationToken) {
-  log("getComments called url=" + asUrl(url));
-  return [];
-};
-
-
-
-
-

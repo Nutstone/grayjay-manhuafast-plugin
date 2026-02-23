@@ -4,8 +4,8 @@
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 
-const BASE_URL_PRIMARY = "https://manhuafast.com";
-const BASE_URL_FALLBACK = "https://manhuafast.net";
+const BASE_URL_PRIMARY = "https://manhuafast.net";
+const BASE_URL_FALLBACK = "https://manhuafast.com";
 
 const REGEX_CHANNEL_URL = new RegExp("^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/([^\\/]+)\\/?$");
 const REGEX_CHAPTER_URL = new RegExp(
@@ -605,4 +605,5 @@ source.getComments = function (url, continuationToken) {
   log("getComments called url=" + asUrl(url));
   return [];
 };
+
 

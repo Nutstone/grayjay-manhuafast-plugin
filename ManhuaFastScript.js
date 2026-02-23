@@ -553,11 +553,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 // ===========================
 
 source.isContentDetailsUrl = function (url) {
-  var raw = url;
-  var normalized = asUrl(url);
-  var ok = REGEX_CHAPTER_URL.test(normalized);
-  log("isContentDetailsUrl raw=" + describeValue(raw) + " normalized=" + normalized + " match=" + ok);
-  return ok;
+  return true;
 };
 
 source.getContentDetails = function (url) {
@@ -605,6 +601,7 @@ source.getComments = function (url, continuationToken) {
   log("getComments called url=" + asUrl(url));
   return [];
 };
+
 
 
 

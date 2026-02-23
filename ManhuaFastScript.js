@@ -519,7 +519,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWebDetails({
+        var webItem = new PlatformWeb({
           id: postId,
           author: author,
           name: chapterName,
@@ -601,6 +601,7 @@ source.getComments = function (url, continuationToken) {
   log("getComments called url=" + asUrl(url));
   return [];
 };
+
 
 
 

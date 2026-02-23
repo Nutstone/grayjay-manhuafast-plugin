@@ -27,25 +27,6 @@ const ORDER_OLDEST = "oldest";
 
 const config = { id: undefined };
 
-// ===========================
-// Debug logging helpers
-// ===========================
-
-const DEBUG = true;
-
-function log(msg) {
-  if (!DEBUG) return;
-  try { console.log("[ManhuaFast][DBG] " + msg); } catch (e) {}
-}
-
-function logObj(label, obj) {
-  if (!DEBUG) return;
-  try {
-    var s = "";
-    try { s = JSON.stringify(obj); } catch (e) { s = String(obj); }
-    console.log("[ManhuaFast][DBG] " + label + ": " + s);
-  } catch (e) {}
-}
 
 function describeValue(v) {
   try {
@@ -305,7 +286,6 @@ source.enable = function (conf) {
   log("PlatformWeb typeof=" + typeof PlatformWeb);
   log("PlatformWebDetails typeof=" + typeof PlatformWebDetails);
   log("PlatformID typeof=" + typeof PlatformID);
-  logObj("config", conf);
 };
 
 // ===========================
@@ -625,3 +605,4 @@ source.getComments = function (url, continuationToken) {
   log("getComments called url=" + asUrl(url));
   return [];
 };
+

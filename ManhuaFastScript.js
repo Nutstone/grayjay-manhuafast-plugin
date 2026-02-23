@@ -3,6 +3,8 @@ const PLATFORM_CLAIMTYPE = 2;
 const REGEX_HUMAN_AGO = new RegExp("([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago");
 // Trailing slash is optional so URLs without it still match (I)
 const REGEX_CHANNEL_URL = new RegExp("^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/?$");
+// Chapter reader pages have two path segments under /manga/ (e.g. /manga/slug/chapter-1/)
+const REGEX_CHAPTER_URL = new RegExp("^https:\/\/manhuafast\.(com|net)\/manga\/[^\/]+\/[^\/]+\/?$");
 
 const BASE_URL_PRIMARY = "https://manhuafast.com";
 const BASE_URL_FALLBACK = "https://manhuafast.net";
@@ -568,8 +570,8 @@ source.getChannelContents = function(url, type, order, filters, continuationToke
     return new ContentPager(pageItems, hasMore, { offset: offset + PAGE_SIZE });
 }
 
-source.isContentDetailsUrl = function(url) { return false; }
-// Always false so the URL is opened in web view instead of app plugin view
+source.isContentDetailsUrl = function(url) { return REGEX_CHAPTER_URL.test(url); }
+// Returns true for chapter reader URLs so Grayjay tracks them in watch history
 
 // Chapter images scoped to the reader container first,
 // falling back progressively to avoid capturing UI images (D)
@@ -584,7 +586,10 @@ source.getContentDetails = function(url) {
     if (mangaIdParts.length < 2) {
         throw new ScriptException("[ManhuaFast] UNEXPECTED CONTENT URL: no '/manga/' in " + url);
     }
-    var mangaId = stripTrailingSlash(mangaIdParts[1]);
+    var pathParts = mangaIdParts[1].split('/').filter(Boolean);
+    var mangaSlug   = pathParts[0];
+    var chapterSlug = pathParts.length > 1 ? pathParts[1] : pathParts[0];
+    var mangaUrl    = BASE_URL_PRIMARY + "/manga/" + mangaSlug + "/";
 
     // Prefer chapter-reader container; fall back to entry content then all images (D)
     var imgElements = doc.querySelectorAll(".reading-content img");
@@ -615,11 +620,12 @@ source.getContentDetails = function(url) {
             " <img> tags but NONE had data-src or src in " + ctx);
     }
 
-    var id = new PlatformID(PLATFORM, mangaId, config.id, PLATFORM_CLAIMTYPE);
+    var mangaId   = new PlatformID(PLATFORM, mangaSlug,   config.id, PLATFORM_CLAIMTYPE);
+    var chapterId = new PlatformID(PLATFORM, chapterSlug, config.id, PLATFORM_CLAIMTYPE);
 
     return new PlatformNestedMediaContentDetails({
-        id: id, name: mangaId,
-        author: new PlatformAuthorLink(id, mangaId, url, "", 0, ""),
+        id: chapterId, name: chapterSlug,
+        author: new PlatformAuthorLink(mangaId, mangaSlug, mangaUrl, "", 0, ""),
         datetime: 0, url: url, description: "",
         images: images, thumbnails: thumbnailsArray,
         rating: new RatingLikes(0),

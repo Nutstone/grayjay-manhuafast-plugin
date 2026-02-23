@@ -672,7 +672,6 @@ source.getContentDetails = function (url) {
       author: author,
       name: title,
       datetime: 0,
-      url: url,
       description: "WEB: " + url,
       content: htmlBody,
       textType: Type.Text.HTML
@@ -685,3 +684,4 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+

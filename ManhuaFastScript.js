@@ -4,10 +4,13 @@ const PLATFORM_CLAIMTYPE = 2;
 const BASE_URL_PRIMARY = "https://manhuafast.com";
 const BASE_URL_FALLBACK = "https://manhuafast.net";
 
-// Trailing slash optional for manga page URLs
+// /manga/<slug>/
 const REGEX_CHANNEL_URL = new RegExp("^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/([^\\/]+)\\/?$");
-// Chapter reader: /manga/<slug>/<chapter>/ (two segments under /manga/)
-const REGEX_CHAPTER_URL = new RegExp("^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/[^\\/]+\\/[^\\/]+\\/?$");
+
+// /manga/<slug>/<chapter>/ (+ optional ?query or #hash)
+const REGEX_CHAPTER_URL = new RegExp(
+  "^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/[^\\/]+\\/[^\\/]+\\/?(?:[?#].*)?$"
+);
 
 const REGEX_HUMAN_AGO = new RegExp(
   "([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago"
@@ -46,20 +49,26 @@ function isUsableResponse(response) {
 
 function requestGET(url, extraHeaders) {
   var headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
-  headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
+  headers["Referer"] =
+    url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
   var response = null;
+
   try {
     response = http.GET(url, headers, false);
   } catch (e) {
     response = null;
   }
+
   if (isUsableResponse(response)) return response;
 
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP GET FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
+      "[ManhuaFast] HTTP GET FAILED for " +
+        url +
+        " — HTTP " +
+        (response ? response.code : "null/error")
     );
   }
 
@@ -93,20 +102,26 @@ function requestGET(url, extraHeaders) {
 
 function requestPOST(url, postBody, extraHeaders) {
   var headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
-  headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
+  headers["Referer"] =
+    url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
   var response = null;
+
   try {
     response = http.POST(url, postBody || "", headers, false);
   } catch (e) {
     response = null;
   }
+
   if (isUsableResponse(response)) return response;
 
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
     throw new ScriptException(
-      "[ManhuaFast] HTTP POST FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
+      "[ManhuaFast] HTTP POST FAILED for " +
+        url +
+        " — HTTP " +
+        (response ? response.code : "null/error")
     );
   }
 
@@ -168,23 +183,28 @@ function requireElements(parent, selector, context) {
 function requireText(element, context) {
   if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT reading textContent in " + context);
   var text = element.textContent;
-  if (text === null || text === undefined) throw new ScriptException("[ManhuaFast] textContent NULL/UNDEFINED in " + context);
-  return text.trim();
+  if (text === null || text === undefined) {
+    throw new ScriptException("[ManhuaFast] textContent NULL/UNDEFINED in " + context);
+  }
+  return String(text).trim();
 }
 
 function requireAttr(element, attr, context) {
   if (!element) throw new ScriptException("[ManhuaFast] NULL ELEMENT reading attr '" + attr + "' in " + context);
   var val = element.getAttribute(attr);
   if (!val) throw new ScriptException("[ManhuaFast] ATTRIBUTE '" + attr + "' MISSING/EMPTY in " + context);
-  return val;
+  return String(val).trim();
 }
 
 function requireImageSrc(imgElement, context) {
   if (!imgElement) throw new ScriptException("[ManhuaFast] NULL IMG in " + context);
+
   var dataSrc = imgElement.getAttribute("data-src");
   if (dataSrc && dataSrc.trim().length > 0) return dataSrc.trim();
+
   var src = imgElement.getAttribute("src");
   if (src && src.trim().length > 0) return src.trim();
+
   throw new ScriptException("[ManhuaFast] IMG HAS NO data-src OR src in " + context);
 }
 
@@ -192,6 +212,15 @@ function toPrimaryUrl(url) {
   if (!url) return url;
   if (url.indexOf(BASE_URL_FALLBACK) === 0) return url.replace(BASE_URL_FALLBACK, BASE_URL_PRIMARY);
   return url;
+}
+
+// Accept string URL, PlatformID, or content object
+function asUrl(u) {
+  if (!u) return "";
+  if (typeof u === "string") return u;
+  if (typeof u === "object" && typeof u.value === "string") return u.value; // PlatformID
+  if (typeof u === "object" && typeof u.url === "string") return u.url; // content object
+  return String(u);
 }
 
 // ============================================================
@@ -205,6 +234,7 @@ function extract_Timestamp(str) {
   if (match) {
     var value = parseInt(match[1]);
     if (isNaN(value)) return 0;
+
     var now = Math.floor(new Date().getTime() / 1000);
 
     switch (match[2]) {
@@ -234,56 +264,11 @@ function extract_Timestamp(str) {
     }
   }
 
-  // fallback: parse date-ish strings if present
+  // Fallback: parse date-ish strings if present
   var date = new Date(str);
   if (!isNaN(date.getTime())) return Math.floor(date.getTime() / 1000);
 
   return 0;
-}
-
-// ============================================================
-// HTML wrapper to keep site rendering close to original
-// - adds <base href="..."> so relative resources resolve
-// - adds a tiny script to hydrate lazy images if needed
-// ============================================================
-
-function wrapHtmlForWebView(originalHtml, pageUrl) {
-  if (!originalHtml) return "";
-
-  var html = originalHtml;
-
-  // Ensure there is a <head> to inject into
-  if (html.indexOf("<head") === -1) {
-    html = "<html><head></head><body>" + html + "</body></html>";
-  }
-
-  // Inject <base> early in <head>
-  // (If base exists already, leave it)
-  if (html.toLowerCase().indexOf("<base ") === -1) {
-    html = html.replace(/<head([^>]*)>/i, function (m, attrs) {
-      return (
-        "<head" +
-        (attrs || "") +
-        ">" +
-        '<base href="' +
-        pageUrl +
-        '">' // absolute base
-      );
-    });
-  }
-
-  // Hydrate lazy-loaded images if their scripts don't run the same way in WebDetails renderer
-  const lazyFix =
-    "<script>(function(){try{document.querySelectorAll('img[data-src]').forEach(function(img){if(!img.getAttribute('src')){img.setAttribute('src', img.getAttribute('data-src'));}});}catch(e){}})();</script>";
-
-  // Put at end of body if possible
-  if (html.toLowerCase().indexOf("</body>") !== -1) {
-    html = html.replace(/<\/body>/i, lazyFix + "</body>");
-  } else {
-    html += lazyFix;
-  }
-
-  return html;
 }
 
 // ============================================================
@@ -292,13 +277,12 @@ function wrapHtmlForWebView(originalHtml, pageUrl) {
 
 source.enable = function (conf) {
   source.config = conf;
-  // Most plugins store plugin id at conf.id; keep a safe fallback
-  config.id = (conf && conf.id) ? conf.id : config.id;
+  config.id = conf && conf.id ? conf.id : config.id;
   console.log("[ManhuaFast] Plugin enabled");
 };
 
 // ============================================================
-// Home (Subscriptions feed) -> PlatformPost
+// Home (source home feed)
 // ============================================================
 
 source.getHome = function (continuationToken) {
@@ -333,7 +317,7 @@ source.getHome = function (continuationToken) {
     var authorId = new PlatformID(PLATFORM, mangaIdParts[1], config.id, PLATFORM_CLAIMTYPE);
     var author = new PlatformAuthorLink(authorId, mangaTitle, mangaUrl, thumbUrl, 0, "");
 
-    // IMPORTANT: Post id key is the chapterUrl (stable & unique)
+    // Stable unique ID = chapter URL
     var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
     posts.push(
@@ -342,8 +326,8 @@ source.getHome = function (continuationToken) {
         author: author,
         name: chapterName,
         datetime: postedTime,
-        url: chapterLink,
-        thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
+        url: chapterUrl,
+        thumbnails: new Thumbnails([new Thumbnail(thumbUrl, 0)]),
       })
     );
   });
@@ -368,8 +352,13 @@ source.getSearchCapabilities = function () {
 };
 
 source.search = function (query, type, order, filters, continuationToken) {
-  // Not implemented
-  return new ContentPager([], false, { query, type, order, filters, continuationToken });
+  return new ContentPager([], false, {
+    query: query,
+    type: type,
+    order: order,
+    filters: filters,
+    continuationToken: continuationToken,
+  });
 };
 
 // ============================================================
@@ -422,11 +411,11 @@ source.searchChannels = function (query, continuationToken) {
 // ============================================================
 
 source.isChannelUrl = function (url) {
-  return REGEX_CHANNEL_URL.test(url);
+  return REGEX_CHANNEL_URL.test(asUrl(url));
 };
 
 source.getChannel = function (url) {
-  url = toPrimaryUrl(url);
+  url = toPrimaryUrl(asUrl(url));
   var ctx = "getChannel(" + url + ")";
 
   var response = requestGET(url);
@@ -435,7 +424,6 @@ source.getChannel = function (url) {
   var h1 = requireElement(doc, "h1", ctx);
   var name = requireText(h1, ctx + " h1");
 
-  // Support both selectors used across themes
   var img = doc.querySelector(".tab-summary img") || doc.querySelector(".summary_image img");
   var thumb = img ? requireImageSrc(img, ctx + " summary img") : "";
 
@@ -460,20 +448,19 @@ source.getChannel = function (url) {
 source.getChannelCapabilities = function () {
   return {
     types: [Type.Feed.Mixed],
-    sorts: [Type.Order.Chronological, ORDER_OLDEST], // newest-first + oldest-first
+    sorts: [Type.Order.Chronological, ORDER_OLDEST],
     filters: [],
   };
 };
 
 // ============================================================
-// getChannelContents (chapters) -> PlatformPost + sorting toggle
+// Channel contents (chapters) -> PlatformWeb
 // ============================================================
 
 source.getChannelContents = function (url, type, order, filters, continuationToken) {
-  url = toPrimaryUrl(url);
+  url = toPrimaryUrl(asUrl(url));
   var ctx = "getChannelContents(" + url + ")";
 
-  // Fetch channel page for author info
   var getResponse = requestGET(url);
   var getDoc = parseHTML(getResponse.body, url);
 
@@ -490,9 +477,9 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
   var author = new PlatformAuthorLink(authorId, mangaTitle, url, mangaThumb, 0, "");
 
   // Madara chapters endpoint
-  var chapterUrl = url + (url.endsWith("/") ? "" : "/") + "ajax/chapters/";
-  var postResponse = requestPOST(chapterUrl, "");
-  var postDoc = parseHTML(postResponse.body, chapterUrl);
+  var chapterApiUrl = url + (url.endsWith("/") ? "" : "/") + "ajax/chapters/";
+  var postResponse = requestPOST(chapterApiUrl, "");
+  var postDoc = parseHTML(postResponse.body, chapterApiUrl);
 
   var listItems = requireElements(postDoc, "li", ctx + " chapters");
   var posts = [];
@@ -521,45 +508,45 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
     );
   });
 
-  // Site returns already-ordered list; reverse for oldest.
   if (order === ORDER_OLDEST) posts.reverse();
 
-  return new ContentPager(posts, false, { continuationToken: continuationToken, order: order });
+  return new ContentPager(posts, false, {
+    continuationToken: continuationToken,
+    order: order,
+  });
 };
 
 // ============================================================
-// Content details: claim chapter URLs + return PlatformWebDetails(html)
+// Content details -> PlatformWebDetails (URL-based, no html override)
 // ============================================================
 
 source.isContentDetailsUrl = function (url) {
-  return REGEX_CHAPTER_URL.test(url);
+  return REGEX_CHAPTER_URL.test(asUrl(url));
 };
 
 source.getContentDetails = function (url) {
-  url = toPrimaryUrl(url);
+  // Grayjay may pass a string URL or a PlatformID
+  url = toPrimaryUrl(asUrl(url));
 
+  // Optional fetch for title only (and to fail early with a clearer error if chapter is unreachable)
   var response = requestGET(url);
-  var html = wrapHtmlForWebView(response.body, url);
 
-  // Use PlatformWebDetails to render like a web page (near-native site view). (source.js defines this type) :contentReference[oaicite:2]{index=2}
-  var id = new PlatformID(PLATFORM, url, config.id, PLATFORM_CLAIMTYPE);
-
-  // Best-effort title extraction (optional)
   var title = url;
   try {
     var doc = parseHTML(response.body, url);
     var h1 = doc.querySelector("h1");
     if (h1) title = (h1.textContent || "").trim() || title;
   } catch (e) {
-    // keep fallback
+    // keep URL fallback title
   }
 
+  var id = new PlatformID(PLATFORM, url, config.id, PLATFORM_CLAIMTYPE);
+
+  // IMPORTANT: Do NOT set html if you want Grayjay to load the URL itself in the in-app browser
   return new PlatformWebDetails({
     id: id,
     name: title,
     url: url,
-    // PlatformWebDetails uses `html` field per source.js
-    html: html,
   });
 };
 
@@ -570,5 +557,3 @@ source.getContentDetails = function (url) {
 source.getComments = function (url, continuationToken) {
   return [];
 };
-
-

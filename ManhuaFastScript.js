@@ -1,3 +1,9 @@
+// ManhuaFast Grayjay Plugin (WEB chapters -> WebDetailFragment / in-app browser)
+// Notes:
+// - Chapters are returned as PlatformWeb (contentType 7)
+// - getContentDetails returns PlatformWebDetails WITHOUT html, so Grayjay loads value.url in the in-app webview
+// - IDs are stable (chapter URL), so history should remain stable
+
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 
@@ -557,4 +563,3 @@ source.getContentDetails = function (url) {
 source.getComments = function (url, continuationToken) {
   return [];
 };
-

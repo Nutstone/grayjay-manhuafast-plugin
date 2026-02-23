@@ -346,6 +346,7 @@ source.getHome = function (continuationToken) {
         thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
       })
     );
+  });
 
   return new ContentPager(posts, false, { continuationToken: continuationToken });
 };
@@ -509,15 +510,13 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
     var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
     posts.push(
-      new PlatformPost({
+      new PlatformWeb({
         id: postId,
         author: author,
         name: chapterName,
         datetime: postedTime,
         url: chapterLink,
-        description: "",
         thumbnails: new Thumbnails([new Thumbnail(mangaThumb, 0)]),
-        images: [],
       })
     );
   });
@@ -571,4 +570,5 @@ source.getContentDetails = function (url) {
 source.getComments = function (url, continuationToken) {
   return [];
 };
+
 

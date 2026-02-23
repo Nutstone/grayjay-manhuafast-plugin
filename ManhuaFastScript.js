@@ -327,7 +327,7 @@ source.getHome = function (continuationToken) {
 
         var postId = new PlatformID(PLATFORM, chapterUrl, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWeb({
+        var webItem = new PlatformWebDetails({
           id: postId,
           author: author,
           name: chapterName,
@@ -519,7 +519,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
-        var webItem = new PlatformWeb({
+        var webItem = new PlatformWebDetails({
           id: postId,
           author: author,
           name: chapterName,
@@ -605,5 +605,6 @@ source.getComments = function (url, continuationToken) {
   log("getComments called url=" + asUrl(url));
   return [];
 };
+
 
 

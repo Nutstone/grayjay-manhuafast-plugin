@@ -1,8 +1,8 @@
 const PLATFORM = "ManhuaFast";
 const PLATFORM_CLAIMTYPE = 2;
 
-const BASE_URL_PRIMARY = "https://manhuafast.net";
-const BASE_URL_FALLBACK = "https://manhuafast.com";
+const BASE_URL_PRIMARY = "https://manhuafast.com";
+const BASE_URL_FALLBACK = "https://manhuafast.net";
 
 const REGEX_CHANNEL_URL = /^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/?$/;
 const REGEX_HUMAN_AGO = /([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago/;
@@ -487,3 +487,4 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
     throw e;
   }
 };
+

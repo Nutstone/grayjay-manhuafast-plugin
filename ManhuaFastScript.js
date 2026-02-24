@@ -555,8 +555,8 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
         var browserUrl = makeExternalBrowserUrl(chapterLink); // marker ensures browser routing
         var htmlBody =
           '<div style="padding:12px;">' +
-          '<p>Open chapter in browser:</p>' +
-          '<p><a href="' + browserUrl + '">Read chapter</a></p>' +
+          '<p><a href="' + browserUrl + '">Open chapter in browser</a></p>' +
+          '<p></p>' +
           '</div>';
         
         var postItem = new PlatformPostDetails({
@@ -718,6 +718,7 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+
 
 
 

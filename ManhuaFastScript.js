@@ -459,6 +459,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
         var htmlBody =
           '<div style="padding:12px;">' +
           '<p><a href="' + chapterLink + '">Open chapter in browser</a></p>' +
+          '<p></p>' +
           '</div>';
 
         var postItem = new PlatformPostDetails({

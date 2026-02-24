@@ -552,16 +552,24 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
-        // IMPORTANT: url is intentionally empty so Grayjay doesn't route post-click as content URL.
-        var postItem = new PlatformPost({
+        var browserUrl = makeExternalBrowserUrl(chapterLink); // marker ensures browser routing
+        var htmlBody =
+          '<div style="padding:12px;">' +
+          '<p>Open chapter in browser:</p>' +
+          '<p><a href="' + browserUrl + '">Read chapter</a></p>' +
+          '</div>';
+        
+        var postItem = new PlatformPostDetails({
           id: postId,
           author: author,
           name: chapterName,
           datetime: postedTime,
           url: chapterLink,
-          description: "Open chapter"
+          description: "",
+          content: htmlBody,
+          textType: Type.Text.HTML
         });
-
+        
         logContentItem("getChannelContents item[" + index + "]", postItem);
         posts.push(postItem);
       } catch (e) {
@@ -697,7 +705,7 @@ source.getContentDetails = function (url) {
       author: author,
       name: title,
       datetime: 0,
-      url: url,                  // IMPORTANT: do not expose plugin chapter URL here
+      url: url,
       description: "Open chapter",
       content: htmlBody,
       textType: Type.Text.HTML
@@ -710,5 +718,6 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+
 
 

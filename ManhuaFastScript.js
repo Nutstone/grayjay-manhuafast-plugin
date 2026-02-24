@@ -253,25 +253,6 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
-// Remove our "open externally in browser" marker so plugin fetching/regex keeps working.
-function stripExternalMarker(url) {
-  if (!url) return url;
-  var s = String(url);
-
-  // Remove gj_external=1 from query string
-  s = s.replace(/([?&])gj_external=1(?=(&|#|$))/gi, function (m, sep) {
-    return sep === "?" ? "?" : "";
-  });
-
-  // Clean up malformed leftovers
-  s = s.replace(/\?&/, "?");
-  s = s.replace(/[?&]#/, "#");
-  s = s.replace(/[?&]$/, "");
-  s = s.replace(/\?$/, "");
-
-  return s;
-}
-
 function makeExternalBrowserUrl(url) {
   if (!url) return "";
   url = String(url);
@@ -615,9 +596,8 @@ source.isContentDetailsUrl = function (url) {
     return false;
   }
 
-  var normalized = stripExternalMarker(url);
-  var ok = REGEX_CHAPTER_URL.test(normalized);
-  log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + normalized + " match=" + ok);
+  var ok = REGEX_CHAPTER_URL.test(url);
+  log("isContentDetailsUrl raw=" + describeValue(raw) + " -> url=" + url + " match=" + ok);
   return ok;
 };
 
@@ -629,7 +609,6 @@ source.getContentDetails = function (url) {
   log("getContentDetails raw=" + describeValue(url));
   try {
     url = toPrimaryUrl(asUrl(url));
-    url = stripExternalMarker(url);
     log("getContentDetails normalized url=" + url);
 
     if (!REGEX_CHAPTER_URL.test(url)) {
@@ -718,7 +697,7 @@ source.getContentDetails = function (url) {
       author: author,
       name: title,
       datetime: 0,
-      url: "",                  // IMPORTANT: do not expose plugin chapter URL here
+      url: url,                  // IMPORTANT: do not expose plugin chapter URL here
       description: "Open chapter",
       content: htmlBody,
       textType: Type.Text.HTML
@@ -731,3 +710,4 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+

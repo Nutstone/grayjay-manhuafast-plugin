@@ -4,10 +4,9 @@ const PLATFORM_CLAIMTYPE = 2;
 const BASE_URL_PRIMARY = "https://manhuafast.net";
 const BASE_URL_FALLBACK = "https://manhuafast.com";
 
-const REGEX_CHANNEL_URL = new RegExp("^https:\\/\\/manhuafast\\.(com|net)\\/manga\\/([^\\/]+)\\/?$");
-const REGEX_HUMAN_AGO = new RegExp("([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago");
+const REGEX_CHANNEL_URL = /^https:\/\/manhuafast\.(com|net)\/manga\/([^\/]+)\/?$/;
+const REGEX_HUMAN_AGO = /([0-9]+) (second|seconds|min|mins|hour|hours|day|days|week|weeks|month|months|year|years) ago/;
 
-const ORDER_OLDEST = "oldest";
 const config = {};
 
 function logContentItem(prefix, item) {
@@ -42,8 +41,7 @@ function isUsableResponse(response) {
 
 function requestGET(url, extraHeaders) {
   var headers = Object.assign({}, extraHeaders || {});
-  headers["Referer"] =
-    url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
+  headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
   log("HTTP GET -> " + url);
   var response = null;
@@ -60,9 +58,7 @@ function requestGET(url, extraHeaders) {
 
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
-    throw new ScriptException(
-      "[ManhuaFast] HTTP GET FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
-    );
+    throw new ScriptException("[ManhuaFast] HTTP GET FAILED for " + url + " — HTTP " + (response ? response.code : "null/error"));
   }
 
   log("HTTP GET trying fallback -> " + fallbackUrl);
@@ -72,27 +68,17 @@ function requestGET(url, extraHeaders) {
     response = http.GET(fallbackUrl, headers, false);
     log("HTTP GET fallback code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
-    throw new ScriptException(
-      "[ManhuaFast] HTTP GET FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e)
-    );
+    throw new ScriptException("[ManhuaFast] HTTP GET FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e));
   }
 
   if (isUsableResponse(response)) return response;
 
-  throw new ScriptException(
-    "[ManhuaFast] HTTP GET FAILED for both " +
-      url +
-      " and " +
-      fallbackUrl +
-      ". Last HTTP code: " +
-      (response ? response.code : "null")
-  );
+  throw new ScriptException("[ManhuaFast] HTTP GET FAILED for both " + url + " and " + fallbackUrl + ". Last HTTP code: " + (response ? response.code : "null"));
 }
 
 function requestPOST(url, postBody, extraHeaders) {
   var headers = Object.assign({}, extraHeaders || {});
-  headers["Referer"] =
-    url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
+  headers["Referer"] = url.indexOf(BASE_URL_FALLBACK) === 0 ? BASE_URL_FALLBACK + "/" : BASE_URL_PRIMARY + "/";
 
   log("HTTP POST -> " + url + " bodyLen=" + ((postBody || "").length));
   var response = null;
@@ -109,9 +95,7 @@ function requestPOST(url, postBody, extraHeaders) {
 
   var fallbackUrl = getFallbackUrl(url);
   if (!fallbackUrl) {
-    throw new ScriptException(
-      "[ManhuaFast] HTTP POST FAILED for " + url + " — HTTP " + (response ? response.code : "null/error")
-    );
+    throw new ScriptException("[ManhuaFast] HTTP POST FAILED for " + url + " — HTTP " + (response ? response.code : "null/error"));
   }
 
   log("HTTP POST trying fallback -> " + fallbackUrl);
@@ -121,21 +105,12 @@ function requestPOST(url, postBody, extraHeaders) {
     response = http.POST(fallbackUrl, postBody || "", headers, false);
     log("HTTP POST fallback code=" + (response ? response.code : "null") + " bodyLen=" + (response && response.body ? response.body.length : 0));
   } catch (e) {
-    throw new ScriptException(
-      "[ManhuaFast] HTTP POST FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e)
-    );
+    throw new ScriptException("[ManhuaFast] HTTP POST FAILED for both " + url + " and " + fallbackUrl + ": " + (e && e.message ? e.message : e));
   }
 
   if (isUsableResponse(response)) return response;
 
-  throw new ScriptException(
-    "[ManhuaFast] HTTP POST FAILED for both " +
-      url +
-      " and " +
-      fallbackUrl +
-      ". Last HTTP code: " +
-      (response ? response.code : "null")
-  );
+  throw new ScriptException("[ManhuaFast] HTTP POST FAILED for both " + url + " and " + fallbackUrl + ". Last HTTP code: " + (response ? response.code : "null"));
 }
 
 // ===========================
@@ -203,21 +178,11 @@ function asUrl(u) {
   return String(u);
 }
 
-function escapeHtml(str) {
-  if (str === null || str === undefined) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 // ===========================
 // Time parsing
 // ===========================
 
-function extract_Timestamp(str) {
+function extractTimestamp(str) {
   if (!str) return 0;
 
   var match = str.match(REGEX_HUMAN_AGO);
@@ -231,17 +196,17 @@ function extract_Timestamp(str) {
       case "second":
       case "seconds": return now - value;
       case "min":
-      case "mins": return now - value * 60;
+      case "mins":    return now - value * 60;
       case "hour":
-      case "hours": return now - value * 3600;
+      case "hours":   return now - value * 3600;
       case "day":
-      case "days": return now - value * 86400;
+      case "days":    return now - value * 86400;
       case "week":
-      case "weeks": return now - value * 604800;
+      case "weeks":   return now - value * 604800;
       case "month":
-      case "months": return now - value * 2592000;
+      case "months":  return now - value * 2592000;
       case "year":
-      case "years": return now - value * 31536000;
+      case "years":   return now - value * 31536000;
     }
   }
 
@@ -257,17 +222,11 @@ function extract_Timestamp(str) {
 source.enable = function (conf) {
   source.config = conf;
   config.id = conf && conf.id ? conf.id : config.id;
-
   log("Plugin enabled");
-  log("PlatformPost typeof=" + typeof PlatformPost);
-  log("PlatformPostDetails typeof=" + typeof PlatformPostDetails);
-  log("PlatformWeb typeof=" + typeof PlatformWeb);
-  log("PlatformWebDetails typeof=" + typeof PlatformWebDetails);
-  log("PlatformID typeof=" + typeof PlatformID);
 };
 
 // ===========================
-// Home (chapters emitted as POST)
+// Home
 // ===========================
 
 source.getHome = function (continuationToken) {
@@ -294,7 +253,7 @@ source.getHome = function (continuationToken) {
         var chapterUrl = toPrimaryUrl(requireAttr(chapterAnchor, "href", ctx + " chapter href"));
 
         var postOnEl = requireElement(item, ".post-on", ctx);
-        var postedTime = extract_Timestamp(requireText(postOnEl, ctx + " post-on"));
+        var postedTime = extractTimestamp(requireText(postOnEl, ctx + " post-on"));
 
         var imgEl = requireElement(item, "img", ctx);
         var thumbUrl = requireImageSrc(imgEl, ctx + " img");
@@ -331,7 +290,7 @@ source.getHome = function (continuationToken) {
 };
 
 // ===========================
-// Search (minimal)
+// Search
 // ===========================
 
 source.searchSuggestions = function (query) { return []; };
@@ -346,7 +305,7 @@ source.getSearchCapabilities = function () {
 
 source.search = function (query, type, order, filters, continuationToken) {
   log("search called query=" + query);
-  return new ContentPager([], false, { query: query, type: type, order: order, filters: filters, continuationToken: continuationToken });
+  return new ContentPager([], false, { query: query, continuationToken: continuationToken });
 };
 
 // ===========================
@@ -404,7 +363,6 @@ source.searchChannels = function (query, continuationToken) {
 // ===========================
 
 source.isChannelUrl = function (url) {
-  var raw = url;
   url = asUrl(url);
   var ok = REGEX_CHANNEL_URL.test(url);
   log("isChannelUrl url=" + url + " match=" + ok);
@@ -412,7 +370,7 @@ source.isChannelUrl = function (url) {
 };
 
 source.getChannel = function (url) {
-  log("getChannel url=" + (url));
+  log("getChannel url=" + url);
   try {
     url = toPrimaryUrl(asUrl(url));
     log("getChannel normalized url=" + url);
@@ -450,7 +408,7 @@ source.getChannel = function (url) {
 source.getChannelCapabilities = function () {
   return {
     types: [Type.Feed.Mixed],
-    sorts: [Type.Order.Chronological, ORDER_OLDEST],
+    sorts: [Type.Order.Chronological],
     filters: [],
   };
 };
@@ -460,7 +418,7 @@ source.getChannelCapabilities = function () {
 // ===========================
 
 source.getChannelContents = function (url, type, order, filters, continuationToken) {
-  log("getChannelContents url=" + url + " type=" + type + " order=" + order);
+  log("getChannelContents url=" + url);
   try {
     url = toPrimaryUrl(asUrl(url));
     log("getChannelContents normalizedUrl=" + url);
@@ -494,16 +452,15 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
         var chapterLink = toPrimaryUrl(requireAttr(a, "href", "chapter[" + index + "] href"));
 
         var iEl = li.querySelector("i");
-        var postedTime = iEl ? extract_Timestamp(requireText(iEl, "chapter[" + index + "] date")) : 0;
+        var postedTime = iEl ? extractTimestamp(requireText(iEl, "chapter[" + index + "] date")) : 0;
 
         var postId = new PlatformID(PLATFORM, chapterLink, config.id, PLATFORM_CLAIMTYPE);
 
         var htmlBody =
           '<div style="padding:12px;">' +
           '<p><a href="' + chapterLink + '">Open chapter in browser</a></p>' +
-          '<p></p>' +
           '</div>';
-        
+
         var postItem = new PlatformPostDetails({
           id: postId,
           author: author,
@@ -514,7 +471,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
           content: htmlBody,
           textType: Type.Text.HTML
         });
-        
+
         logContentItem("getChannelContents item[" + index + "]", postItem);
         posts.push(postItem);
       } catch (e) {
@@ -522,13 +479,8 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
       }
     });
 
-    if (order === ORDER_OLDEST) {
-      log("getChannelContents reversing order for oldest");
-      posts.reverse();
-    }
-
     log("getChannelContents returning count=" + posts.length);
-    return new ContentPager(posts, false, { continuationToken: continuationToken, order: order });
+    return new ContentPager(posts, false, { continuationToken: continuationToken });
   } catch (e) {
     log("getChannelContents FATAL: " + (e && e.message ? e.message : e));
     throw e;

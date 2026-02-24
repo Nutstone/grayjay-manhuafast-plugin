@@ -558,7 +558,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
           author: author,
           name: chapterName,
           datetime: postedTime,
-          url: "",
+          url: chapterLink,
           description: "Open chapter"
         });
 
@@ -710,4 +710,5 @@ source.getContentDetails = function (url) {
     throw e;
   }
 };
+
 

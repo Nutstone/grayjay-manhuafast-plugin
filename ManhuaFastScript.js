@@ -55,8 +55,11 @@ const REGEX_HUMAN_AGO = new RegExp(
 );
 
 const DEFAULT_HEADERS = {
+  // Desktop UA on purpose: some Madara sites (manhuaus) serve a different
+  // mobile template for mobile UAs whose markup our selectors don't match.
+  // The reference selectors are verified against the desktop rendering.
   "User-Agent":
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.5",
 };
@@ -107,11 +110,30 @@ function getFallbackUrl(url, provider) {
   return null;
 }
 
+// Cloudflare interstitials can come back as HTTP 200 — parsing them as a
+// normal page silently yields zero results, so treat them as failures.
+function looksLikeCloudflareChallenge(body) {
+  if (!body) return false;
+  return (
+    body.indexOf("Just a moment...") >= 0 ||
+    body.indexOf("challenges.cloudflare.com") >= 0 ||
+    body.indexOf("_cf_chl_opt") >= 0
+  );
+}
+
 function isUsableResponse(response) {
   if (!response) return false;
   if (typeof response.code === "number" && response.code >= 400) return false;
   if (!response.body || response.body.trim().length === 0) return false;
+  if (looksLikeCloudflareChallenge(response.body)) return false;
   return true;
+}
+
+function httpFailureDetail(response) {
+  if (!response) return "null/error";
+  var detail = String(response.code);
+  if (looksLikeCloudflareChallenge(response.body)) detail += " (Cloudflare challenge page)";
+  return detail;
 }
 
 function refererFor(url, provider) {
@@ -142,7 +164,7 @@ function requestGET(url, extraHeaders) {
       "[" + provider.name + "] HTTP GET FAILED for " +
         url +
         " — HTTP " +
-        (response ? response.code : "null/error")
+        httpFailureDetail(response)
     );
   }
 
@@ -169,8 +191,8 @@ function requestGET(url, extraHeaders) {
       url +
       " (primary) and " +
       fallbackUrl +
-      " (fallback). Last HTTP code: " +
-      (response ? response.code : "null")
+      " (fallback). Last response: " +
+      httpFailureDetail(response)
   );
 }
 
@@ -195,7 +217,7 @@ function requestPOST(url, postBody, extraHeaders) {
       "[" + provider.name + "] HTTP POST FAILED for " +
         url +
         " — HTTP " +
-        (response ? response.code : "null/error")
+        httpFailureDetail(response)
     );
   }
 
@@ -222,8 +244,8 @@ function requestPOST(url, postBody, extraHeaders) {
       url +
       " (primary) and " +
       fallbackUrl +
-      " (fallback). Last HTTP code: " +
-      (response ? response.code : "null")
+      " (fallback). Last response: " +
+      httpFailureDetail(response)
   );
 }
 
@@ -359,7 +381,7 @@ function normalizeTitle(str) {
 // Distinguishes a real manga page from a site's soft-404 page (which has
 // no .post-title block).
 function isMangaPage(doc) {
-  return firstElement(doc, [".post-title h1", ".post-title h3"]) !== null;
+  return firstElement(doc, [".post-title h1", ".post-title h3", "#manga-title h1"]) !== null;
 }
 
 // Find the same manga on `provider`. Returns its manga URL there, or null.
@@ -538,7 +560,18 @@ source.getHome = function (continuationToken) {
   var response = requestGET(homeUrl);
   var doc = parseHTML(response.body, homeUrl);
 
-  var items = requireElements(doc, ".page-item-detail", "getHome(" + homeUrl + ")");
+  // .page-item-detail is the standard Madara listing; .manga__item is the
+  // alternate template some Madara skins use.
+  var items = doc.querySelectorAll(".page-item-detail");
+  if (!items || items.length === 0) items = doc.querySelectorAll(".manga__item");
+  if (!items || items.length === 0) {
+    var pageTitleEl = doc.querySelector("title");
+    var pageTitle = pageTitleEl ? String(pageTitleEl.textContent || "").trim() : "?";
+    throw new ScriptException(
+      "[" + PLATFORM + "] NO LISTING ITEMS (.page-item-detail / .manga__item) in getHome(" +
+        homeUrl + ") — page title: '" + pageTitle + "'"
+    );
+  }
   var posts = [];
 
   items.forEach(function (item, index) {
@@ -547,7 +580,10 @@ source.getHome = function (continuationToken) {
     // Skip items that don't have the full expected markup (e.g. a manga
     // with no chapters yet) instead of failing the whole home feed.
     var mangaAnchor = item.querySelector(".post-title a");
-    var chapterAnchor = item.querySelector(".chapter-item .chapter a") || item.querySelector(".list-chapter .chapter a");
+    var chapterAnchor =
+      item.querySelector(".chapter-item .chapter a") ||
+      item.querySelector(".list-chapter .chapter a") ||
+      item.querySelector(".chapter a");
     var imgEl = item.querySelector("img");
 
     if (!mangaAnchor || !chapterAnchor || !imgEl) {
@@ -627,20 +663,34 @@ source.searchChannels = function (query, continuationToken) {
   var doc = parseHTML(response.body, searchUrl);
 
   var anchors = doc.querySelectorAll(".post-title a");
+  if (!anchors || anchors.length === 0) {
+    // Alternate template fallback: any heading link that points at a manga
+    anchors = doc.querySelectorAll("h3 a[href*='/manga/'], h4 a[href*='/manga/'], h5 a[href*='/manga/']");
+  }
   var channels = [];
 
   if (!anchors || anchors.length === 0) {
+    var pageTitleEl = doc.querySelector("title");
+    console.log(
+      "[" + provider.name + "] searchChannels('" + query + "'): no result anchors — page title: '" +
+        (pageTitleEl ? String(pageTitleEl.textContent || "").trim() : "?") + "'"
+    );
     return new ChannelPager([], false, { query: query, continuationToken: continuationToken });
   }
 
   anchors.forEach(function (a, index) {
     var ctx = "searchChannels[" + index + "]";
 
-    var url = normalizeUrl(requireAttr(a, "href", ctx + " href"));
-    var name = requireText(a, ctx + " text");
+    var href = a.getAttribute("href");
+    var name = String(a.textContent || "").trim();
+    if (!href || !name) return;
 
+    var url = normalizeUrl(href.trim());
     var parts = url.split("/manga/");
-    if (parts.length < 2) throw new ScriptException("[" + PLATFORM + "] UNEXPECTED SEARCH RESULT URL: " + url);
+    if (parts.length < 2 || !parts[1]) {
+      console.log("[" + PLATFORM + "] " + ctx + " unexpected result URL: " + url + " — skipping");
+      return;
+    }
 
     var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
 
@@ -687,7 +737,7 @@ source.getChannel = function (url) {
   var doc = parseHTML(response.body, fetchUrl);
 
   // Madara puts the manga title in .post-title as either h1 or h3
-  var titleEl = firstElement(doc, [".post-title h1", ".post-title h3", "h1"]);
+  var titleEl = firstElement(doc, [".post-title h1", ".post-title h3", "#manga-title h1", "h1"]);
   if (!titleEl) throw new ScriptException("[" + PLATFORM + "] TITLE NOT FOUND in " + ctx);
   var name = requireText(titleEl, ctx + " title");
 
@@ -741,7 +791,7 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
   }
   var getDoc = parseHTML(getResponse.body, fetchUrl);
 
-  var titleEl = firstElement(getDoc, [".post-title h1", ".post-title h3", "h1"]);
+  var titleEl = firstElement(getDoc, [".post-title h1", ".post-title h3", "#manga-title h1", "h1"]);
   if (!titleEl) throw new ScriptException("[" + PLATFORM + "] TITLE NOT FOUND in " + ctx);
   var mangaTitle = requireText(titleEl, ctx + " title");
 

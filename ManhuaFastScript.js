@@ -69,6 +69,11 @@ const config = {
 
 var _activeProvider = PROVIDERS[0];
 
+// "<providerKey>|<mangaSlug>" -> slug of the same manga on that provider
+// ("" = lookup failed; kept in memory for the session so we don't re-search
+// on every refresh, but never persisted).
+var _migrationCache = {};
+
 function getActiveProvider() {
   return _activeProvider || PROVIDERS[0];
 }
@@ -329,6 +334,112 @@ function asUrl(u) {
 }
 
 // ============================================================
+// Subscription migration
+//
+// Subscriptions follow the selected provider: a sub added on site A is
+// resolved on the active site B by trying the same slug first, then a
+// title search. If the manga can't be found on B, the sub keeps loading
+// from A — so switching the dropdown never breaks anything.
+// ============================================================
+
+function getMangaSlug(url) {
+  var parts = url.split("/manga/");
+  if (parts.length < 2) return null;
+  var slug = parts[1].split("/")[0].split("?")[0].split("#")[0];
+  return slug || null;
+}
+
+function normalizeTitle(str) {
+  return String(str)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Distinguishes a real manga page from a site's soft-404 page (which has
+// no .post-title block).
+function isMangaPage(doc) {
+  return firstElement(doc, [".post-title h1", ".post-title h3"]) !== null;
+}
+
+// Find the same manga on `provider`. Returns its manga URL there, or null.
+function resolveMangaOnProvider(provider, slug) {
+  var cacheKey = provider.key + "|" + slug;
+  if (_migrationCache[cacheKey] !== undefined) {
+    return _migrationCache[cacheKey] === ""
+      ? null
+      : provider.baseUrl + "/manga/" + _migrationCache[cacheKey] + "/";
+  }
+
+  // 1) Same slug — Madara aggregators usually share slugs for the same manga
+  try {
+    var directUrl = provider.baseUrl + "/manga/" + slug + "/";
+    var directResponse = requestGET(directUrl);
+    var directDoc = parseHTML(directResponse.body, directUrl);
+    if (isMangaPage(directDoc)) {
+      _migrationCache[cacheKey] = slug;
+      return directUrl;
+    }
+  } catch (e) {
+    // not there under the same slug — try search
+  }
+
+  // 2) Search by the slug's words and match by slug, then by title
+  var query = slug.replace(/-/g, " ");
+  try {
+    var searchUrl = provider.baseUrl + "/?s=" + encodeURIComponent(query) + "&post_type=wp-manga";
+    var searchResponse = requestGET(searchUrl);
+    var searchDoc = parseHTML(searchResponse.body, searchUrl);
+    var anchors = searchDoc.querySelectorAll(".post-title a");
+    var wanted = normalizeTitle(query);
+    var best = null;
+    var bestScore = 0;
+
+    if (anchors) {
+      anchors.forEach(function (a) {
+        var href = a.getAttribute("href");
+        if (!href) return;
+        var candSlug = getMangaSlug(normalizeUrl(href.trim()));
+        if (!candSlug) return;
+        var candTitle = normalizeTitle(a.textContent || "");
+        var score = 0;
+        if (candSlug === slug) score = 3;
+        else if (candTitle === wanted) score = 2;
+        else if (candTitle.length > 0 && (candTitle.indexOf(wanted) === 0 || wanted.indexOf(candTitle) === 0)) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = candSlug;
+        }
+      });
+    }
+
+    if (best) {
+      console.log("[" + PLATFORM + "] Migrated '" + slug + "' -> '" + best + "' on " + provider.name);
+      _migrationCache[cacheKey] = best;
+      return provider.baseUrl + "/manga/" + best + "/";
+    }
+  } catch (e) {
+    // search failed — treat as not found
+  }
+
+  console.log("[" + PLATFORM + "] Could not find '" + slug + "' on " + provider.name + " — keeping original site");
+  _migrationCache[cacheKey] = "";
+  return null;
+}
+
+// Channel URL adjusted to the active provider; the original URL when the
+// manga isn't found there (or already lives there).
+function migrateChannelUrl(url) {
+  var provider = getActiveProvider();
+  var urlProvider = getProviderForUrl(url);
+  if (!urlProvider || urlProvider.key === provider.key) return url;
+  var slug = getMangaSlug(url);
+  if (!slug) return url;
+  var resolved = resolveMangaOnProvider(provider, slug);
+  return resolved || url;
+}
+
+// ============================================================
 // Timestamp parsing
 // ============================================================
 
@@ -391,7 +502,30 @@ source.enable = function (conf, settings, savedState) {
   }
   _activeProvider = PROVIDERS[idx];
 
+  // Restore previously resolved cross-provider slug mappings (successes only)
+  _migrationCache = {};
+  if (savedState) {
+    try {
+      var st = JSON.parse(savedState);
+      if (st && st.migrations) {
+        for (var key in st.migrations) {
+          if (st.migrations[key]) _migrationCache[key] = st.migrations[key];
+        }
+      }
+    } catch (e) {
+      console.log("[" + PLATFORM + "] Failed to restore saved state: " + (e && e.message ? e.message : e));
+    }
+  }
+
   console.log("[" + PLATFORM + "] Plugin enabled — provider: " + _activeProvider.name + " (" + _activeProvider.baseUrl + ")");
+};
+
+source.saveState = function () {
+  var successes = {};
+  for (var key in _migrationCache) {
+    if (_migrationCache[key]) successes[key] = _migrationCache[key];
+  }
+  return JSON.stringify({ migrations: successes });
 };
 
 // ============================================================
@@ -537,11 +671,20 @@ source.isChannelUrl = function (url) {
 };
 
 source.getChannel = function (url) {
-  url = normalizeUrl(asUrl(url));
-  var ctx = "getChannel(" + url + ")";
+  var originalUrl = normalizeUrl(asUrl(url));
+  var fetchUrl = migrateChannelUrl(originalUrl);
+  var ctx = "getChannel(" + originalUrl + (fetchUrl !== originalUrl ? " -> " + fetchUrl : "") + ")";
 
-  var response = requestGET(url);
-  var doc = parseHTML(response.body, url);
+  var response;
+  try {
+    response = requestGET(fetchUrl);
+  } catch (e) {
+    if (fetchUrl === originalUrl) throw e;
+    // Migrated page unreachable — fall back to the site the sub came from
+    fetchUrl = originalUrl;
+    response = requestGET(originalUrl);
+  }
+  var doc = parseHTML(response.body, fetchUrl);
 
   // Madara puts the manga title in .post-title as either h1 or h3
   var titleEl = firstElement(doc, [".post-title h1", ".post-title h3", "h1"]);
@@ -551,8 +694,9 @@ source.getChannel = function (url) {
   var img = firstElement(doc, [".summary_image img", ".tab-summary img"]);
   var thumb = img ? requireImageSrc(img, ctx + " summary img") : "";
 
-  var parts = url.split("/manga/");
-  if (parts.length < 2) throw new ScriptException("[" + PLATFORM + "] UNEXPECTED CHANNEL URL: " + url);
+  // Identity stays on the URL Grayjay asked about so the subscription is stable
+  var parts = originalUrl.split("/manga/");
+  if (parts.length < 2) throw new ScriptException("[" + PLATFORM + "] UNEXPECTED CHANNEL URL: " + originalUrl);
 
   var id = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
 
@@ -563,8 +707,8 @@ source.getChannel = function (url) {
     banner: "",
     subscribers: 0,
     description: "",
-    url: url,
-    urlAlternatives: [],
+    url: originalUrl,
+    urlAlternatives: fetchUrl !== originalUrl ? [fetchUrl] : [],
     links: {},
   });
 };
@@ -582,11 +726,20 @@ source.getChannelCapabilities = function () {
 // ============================================================
 
 source.getChannelContents = function (url, type, order, filters, continuationToken) {
-  url = normalizeUrl(asUrl(url));
-  var ctx = "getChannelContents(" + url + ")";
+  var originalUrl = normalizeUrl(asUrl(url));
+  var fetchUrl = migrateChannelUrl(originalUrl);
+  var ctx = "getChannelContents(" + originalUrl + (fetchUrl !== originalUrl ? " -> " + fetchUrl : "") + ")";
 
-  var getResponse = requestGET(url);
-  var getDoc = parseHTML(getResponse.body, url);
+  var getResponse;
+  try {
+    getResponse = requestGET(fetchUrl);
+  } catch (e) {
+    if (fetchUrl === originalUrl) throw e;
+    // Migrated page unreachable — fall back to the site the sub came from
+    fetchUrl = originalUrl;
+    getResponse = requestGET(originalUrl);
+  }
+  var getDoc = parseHTML(getResponse.body, fetchUrl);
 
   var titleEl = firstElement(getDoc, [".post-title h1", ".post-title h3", "h1"]);
   if (!titleEl) throw new ScriptException("[" + PLATFORM + "] TITLE NOT FOUND in " + ctx);
@@ -595,14 +748,15 @@ source.getChannelContents = function (url, type, order, filters, continuationTok
   var summaryImg = firstElement(getDoc, [".summary_image img", ".tab-summary img"]);
   var mangaThumb = summaryImg ? requireImageSrc(summaryImg, ctx + " summary img") : "";
 
-  var parts = url.split("/manga/");
-  if (parts.length < 2) throw new ScriptException("[" + PLATFORM + "] UNEXPECTED CHANNEL URL: " + url);
+  // Identity stays on the URL Grayjay asked about so the subscription is stable
+  var parts = originalUrl.split("/manga/");
+  if (parts.length < 2) throw new ScriptException("[" + PLATFORM + "] UNEXPECTED CHANNEL URL: " + originalUrl);
 
   var authorId = new PlatformID(PLATFORM, parts[1], config.id, PLATFORM_CLAIMTYPE);
-  var author = new PlatformAuthorLink(authorId, mangaTitle, url, mangaThumb, 0, "");
+  var author = new PlatformAuthorLink(authorId, mangaTitle, originalUrl, mangaThumb, 0, "");
 
   // Madara chapters endpoint (same on both providers)
-  var chapterApiUrl = url + (url.endsWith("/") ? "" : "/") + "ajax/chapters/";
+  var chapterApiUrl = fetchUrl + (fetchUrl.endsWith("/") ? "" : "/") + "ajax/chapters/";
   var postResponse = requestPOST(chapterApiUrl, "");
   var postDoc = parseHTML(postResponse.body, chapterApiUrl);
 
@@ -664,8 +818,30 @@ source.getContentDetails = function (url) {
   log("getContenDetails");
   url = normalizeUrl(asUrl(url));
 
+  // Chapter links follow the active provider too: /manga/<slug>/<chapter>/
+  // is re-rooted onto the resolved manga there, falling back to the
+  // original site if the chapter can't be fetched.
+  var response = null;
+  var active = getActiveProvider();
+  var urlProvider = getProviderForUrl(url);
+  if (urlProvider && urlProvider.key !== active.key) {
+    var m = url.match(/^https?:\/\/[^\/]+\/manga\/([^\/]+)\/(.+)$/);
+    if (m) {
+      var resolvedManga = resolveMangaOnProvider(active, m[1]);
+      if (resolvedManga) {
+        var candidate = resolvedManga + m[2];
+        try {
+          response = requestGET(candidate);
+          url = candidate;
+        } catch (e) {
+          response = null;
+        }
+      }
+    }
+  }
+
   // Optional fetch for title only (and to fail early with a clearer error if chapter is unreachable)
-  var response = requestGET(url);
+  if (!response) response = requestGET(url);
 
   var title = url;
   try {

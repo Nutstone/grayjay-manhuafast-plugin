@@ -29,7 +29,7 @@
 		{
 			"variable": "provider",
 			"name": "Provider",
-			"description": "Which site to browse. Existing subscriptions keep loading from the site they were added from.",
+			"description": "Which site to use. Subscriptions follow this choice: each manga is looked up on the selected site (same name first, then by search) and falls back to its original site if not found there.",
 			"type": "Dropdown",
 			"default": "0",
 			"options": ["ManhuaFast", "ManhuaUS"]

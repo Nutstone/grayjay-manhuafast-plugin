@@ -1,12 +1,12 @@
 {
 	"name": "ManhuaFast",
-	"description": "Viewer for manhua fast",
+	"description": "Viewer for manhua sites (ManhuaFast / ManhuaUS)",
 	"author": "nuthug",
 	"authorUrl": "https://raw.githubusercontent.com/Nutstone/",
 	"sourceUrl": "https://nutstone.github.io/grayjay-manhuafast-plugin/ManhuaFastConfig.json",
 	"repositoryUrl": "https://nutstone.github.io/grayjay-manhuafast-plugin/",
 	"scriptUrl": "./ManhuaFastScript.js",
-	"version": 5,
+	"version": 6,
 
 	"iconUrl": "./d7dfe5ef-4332-4ffa-b890-1b703d22ca0d.png",
 	"id": "cd1dff4b-89d3-4326-8c8c-930da64cec5c",
@@ -20,9 +20,19 @@
 		"manhuafast.com",
 		"www.manhuafast.com",
 		"manhuafast.net",
-		"www.manhuafast.net"
+		"www.manhuafast.net",
+		"manhuaus.com",
+		"www.manhuaus.com"
+	],
+
+	"settings": [
+		{
+			"variable": "provider",
+			"name": "Provider",
+			"description": "Which site to browse. Existing subscriptions keep loading from the site they were added from.",
+			"type": "Dropdown",
+			"default": "0",
+			"options": ["ManhuaFast", "ManhuaUS"]
+		}
 	]
 }
-
-
-
